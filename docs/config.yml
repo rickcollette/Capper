@@ -1,0 +1,68 @@
+site:
+  name: "Capper Documentation"
+  description: "Documentation for the Capper private cloud platform."
+  base_url: "/"
+  version: "0.1.0"
+
+outputs:
+  markdown:
+    enabled: true
+    out_dir: "docs/dist/markdown"
+  web:
+    enabled: true
+    out_dir: "docs/dist/web"
+    theme: "capper"
+  pdf:
+    enabled: true
+    out_dir: "docs/dist/pdf"
+    bundles:
+      - name: "capper-full"
+        title: "Capper Complete Documentation"
+        nav: "docs/nav.yml"
+      - name: "capper-operator-guide"
+        title: "Capper Operator Guide"
+        include:
+          - "getting-started/**"
+          - "operator-guide/**"
+          - "runbooks/**"
+      - name: "capper-developer-guide"
+        title: "Capper Developer Guide"
+        include:
+          - "developer-guide/**"
+          - "reference/**"
+          - "architecture/**"
+
+inventory:
+  source_roots:
+    - "cmd"
+    - "internal"
+  required_modules:
+    - "cmd/capper"
+    - "internal/api"
+    - "internal/control"
+    - "internal/manager"
+    - "internal/network"
+    - "internal/firewall"
+    - "internal/dns"
+    - "internal/lb"
+    - "internal/ingress"
+    - "internal/iam"
+    - "internal/secret"
+    - "internal/topology"
+    - "internal/registry"
+    - "internal/storage"
+    - "internal/s3server"
+    - "internal/database"
+    - "internal/backup"
+    - "internal/autoscale"
+    - "internal/billing"
+    - "internal/marketplace"
+    - "internal/metadata"
+    - "internal/compute"
+    - "internal/eventing"
+    - "internal/health"
+    - "internal/edge"
+    - "internal/scanner"
+    - "internal/observability"
+    - "internal/org"
+    - "internal/host"

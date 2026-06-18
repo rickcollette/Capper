@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capper.local/schemas/capsule.schema.json",
+  "title": "Capsule Manifest v0.1",
+  "type": "object",
+  "required": ["capsuleVersion", "name", "version", "created", "entrypoint", "workingDir", "shell", "user", "rootfs", "network"],
+  "properties": {
+    "capsuleVersion": {"type": "string", "const": "0.1"},
+    "name": {"type": "string"},
+    "version": {"type": "string"},
+    "created": {"type": "string", "format": "date-time"},
+    "hostname": {"type": "string"},
+    "entrypoint": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "args": {"type": "array", "items": {"type": "string"}},
+    "env": {"type": "object", "additionalProperties": {"type": "string"}},
+    "workingDir": {"type": "string"},
+    "shell": {"type": "string"},
+    "user": {
+      "type": "object",
+      "required": ["uid", "gid"],
+      "properties": {
+        "uid": {"type": "integer", "minimum": 0},
+        "gid": {"type": "integer", "minimum": 0}
+      }
+    },
+    "rootfs": {
+      "type": "object",
+      "required": ["archive", "digest"],
+      "properties": {
+        "archive": {"type": "string"},
+        "digest": {"type": "string"},
+        "compression": {"type": "string", "enum": ["zstd", "gzip", "none"]}
+      }
+    },
+    "network": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {"enabled": {"type": "boolean"}}
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "memoryBytes": {"type": "integer", "minimum": 0},
+        "cpuTimeSecs": {"type": "integer", "minimum": 0},
+        "maxProcesses": {"type": "integer", "minimum": 0},
+        "fileSizeBytes": {"type": "integer", "minimum": 0}
+      }
+    }
+  },
+  "additionalProperties": false
+}

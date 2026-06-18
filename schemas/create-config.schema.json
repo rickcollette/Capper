@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capper.local/schemas/create-config.schema.json",
+  "title": "Capper Create Config",
+  "type": "object",
+  "required": ["name", "version", "rootfs", "entrypoint"],
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "minLength": 1},
+    "rootfs": {"type": "string", "minLength": 1},
+    "hostname": {"type": "string", "minLength": 1},
+    "entrypoint": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "args": {"type": "array", "items": {"type": "string"}, "default": []},
+    "env": {"type": "object", "additionalProperties": {"type": "string"}, "default": {}},
+    "workingDir": {"type": "string", "default": "/"},
+    "shell": {"type": "string", "default": "/bin/sh"},
+    "user": {
+      "type": "object",
+      "properties": {
+        "uid": {"type": "integer", "minimum": 0, "default": 0},
+        "gid": {"type": "integer", "minimum": 0, "default": 0}
+      },
+      "default": {"uid": 0, "gid": 0}
+    },
+    "network": {
+      "type": "object",
+      "properties": {"enabled": {"type": "boolean", "default": false}},
+      "default": {"enabled": false}
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "memoryBytes": {"type": "integer", "minimum": 0},
+        "cpuTimeSecs": {"type": "integer", "minimum": 0},
+        "maxProcesses": {"type": "integer", "minimum": 0},
+        "fileSizeBytes": {"type": "integer", "minimum": 0}
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false
+}

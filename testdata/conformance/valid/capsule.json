@@ -1,0 +1,19 @@
+{
+  "capsuleVersion": "0.1",
+  "name": "hello",
+  "version": "0.1.0",
+  "created": "2024-01-01T00:00:00Z",
+  "entrypoint": ["/bin/sh"],
+  "args": [],
+  "env": {},
+  "workingDir": "/",
+  "shell": "/bin/sh",
+  "user": {"uid": 0, "gid": 0},
+  "rootfs": {
+    "archive": "rootfs.tar.zst",
+    "digest": "sha256:abc123",
+    "compression": "zstd"
+  },
+  "network": {"enabled": false},
+  "resources": {}
+}

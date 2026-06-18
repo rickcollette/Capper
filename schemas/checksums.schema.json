@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capper.local/schemas/checksums.schema.json",
+  "title": "Capper Checksums",
+  "type": "object",
+  "required": ["algorithm", "files"],
+  "properties": {
+    "algorithm": {"type": "string", "const": "sha256"},
+    "files": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[a-fA-F0-9]{64}$"
+      }
+    }
+  },
+  "additionalProperties": false
+}
