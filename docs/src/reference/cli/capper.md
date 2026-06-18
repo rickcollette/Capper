@@ -1129,7 +1129,7 @@ capper db create NAME [flags]
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--engine` | — | database engine: postgres, redis, or mariadb (required) |
+| `--engine` | — | database engine: postgres, redis, mariadb, or capdb (required) |
 | `--network` | — | attach to virtual network (name or ID) |
 | `--port` | — | database port (optional) |
 | `--version` | — | engine version (optional) |
