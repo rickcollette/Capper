@@ -185,6 +185,17 @@ func (s *Store) DeleteLease(networkID, instanceID string) error {
 	return err
 }
 
+// AllLeases returns every lease across all networks.
+func (s *Store) AllLeases() ([]NetworkLease, error) {
+	rows, err := s.db.Query(
+		`SELECT network_id, instance_id, ip, mac, created_at FROM network_leases ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanLeases(rows)
+}
+
 // LeasesForNetwork returns all leases on a network.
 func (s *Store) LeasesForNetwork(networkID string) ([]NetworkLease, error) {
 	rows, err := s.db.Query(

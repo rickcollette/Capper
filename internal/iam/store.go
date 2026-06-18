@@ -299,6 +299,12 @@ func (s *Store) DeleteUser(nameOrID string) error {
 	if err != nil {
 		return err
 	}
+	// Cascade: revoke the user's role grants, group memberships, and API tokens.
+	// Orphaned tokens are a security hole — they would keep authenticating as the
+	// removed principal.
+	_, _ = s.db.Exec(`DELETE FROM iam_grants WHERE principal_type='user' AND principal_id=?`, u.ID)
+	_, _ = s.db.Exec(`DELETE FROM iam_group_members WHERE user_id=?`, u.ID)
+	_, _ = s.db.Exec(`DELETE FROM iam_tokens WHERE principal_type='user' AND principal_id=?`, u.ID)
 	_, err = s.db.Exec(`DELETE FROM iam_users WHERE id=?`, u.ID)
 	return err
 }
@@ -947,6 +953,10 @@ func (s *Store) UpdateGroupByAccount(accountID, groupID string, updates map[stri
 }
 
 func (s *Store) DeleteGroupByAccount(accountID, groupID string) error {
+	// Cascade: drop memberships and any role grants made to the group so they
+	// aren't left dangling (and can't leak access if a group id is reused).
+	_, _ = s.db.Exec(`DELETE FROM iam_group_members WHERE group_id=?`, groupID)
+	_, _ = s.db.Exec(`DELETE FROM iam_grants WHERE principal_type='group' AND principal_id=?`, groupID)
 	_, err := s.db.Exec(`DELETE FROM iam_groups WHERE id=? AND account_id=?`, groupID, accountID)
 	return err
 }

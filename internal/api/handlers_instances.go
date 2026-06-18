@@ -12,7 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"capper/internal/adminconfig"
 	"capper/internal/cgroup"
+	"capper/internal/hoststorage"
 	"capper/internal/manager"
 	"capper/internal/metadata"
 	"capper/internal/network"
@@ -35,6 +37,10 @@ type createInstanceRequest struct {
 	CapInitMetadata map[string]any    `json:"capInitMetadata,omitempty"`
 	Volumes         []volumeAttach    `json:"volumes,omitempty"`
 	Placement       *placementRequest `json:"placement,omitempty"`
+	// DiskBytes overrides the instance type's root-disk size. When a default
+	// instance storage pool is configured the disk is drawn from it, so the
+	// request must fit the pool's available capacity.
+	DiskBytes int64 `json:"diskBytes,omitempty"`
 }
 
 type placementRequest struct {
@@ -182,6 +188,17 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeBadRequest(w, err)
 		return
+	}
+
+	// Optional root-disk size override, validated against the instance storage
+	// pool when one is configured.
+	if req.DiskBytes > 0 {
+		if err := s.validateInstanceDiskSize(req.DiskBytes); err != nil {
+			writeBadRequest(w, err)
+			return
+		}
+		resources.Limits.DiskBytes = req.DiskBytes
+		resources.DiskSet = true
 	}
 
 	if qerr := s.ctrl.Store.Billing.CheckQuota(s.project, "instance"); qerr != nil {
@@ -569,6 +586,75 @@ func resolveInstancePlacement(s *Server, req createInstanceRequest) instancePlac
 		}
 	}
 	return instancePlacement{}
+}
+
+// validateInstanceDiskSize ensures a requested root-disk size fits the configured
+// instance storage pool's available capacity. With no pool configured the disk
+// lives under the store path, so only a positive size is required.
+func (s *Server) validateInstanceDiskSize(diskBytes int64) error {
+	if diskBytes <= 0 {
+		return fmt.Errorf("disk size must be positive")
+	}
+	poolID := ""
+	if s.ctrl.Store.AdminConfig != nil {
+		if v, ok, _ := s.ctrl.Store.AdminConfig.Get(adminconfig.KeyDefaultInstancePool); ok {
+			poolID = v
+		}
+	}
+	if poolID == "" {
+		return nil
+	}
+	pool, err := hoststorage.NewManager(s.ctrl.Store.HostStorage).GetPool(poolID)
+	if err != nil {
+		return fmt.Errorf("instance storage pool unavailable")
+	}
+	if pool.Health == hoststorage.PoolDegraded {
+		return fmt.Errorf("instance storage pool %q is degraded", pool.Name)
+	}
+	if diskBytes > pool.AvailableBytes {
+		return fmt.Errorf("requested disk (%d bytes) exceeds available pool capacity (%d bytes)", diskBytes, pool.AvailableBytes)
+	}
+	return nil
+}
+
+// instanceDiskCapacity is the wizard's view of how much disk a new instance may
+// claim and from where.
+type instanceDiskCapacity struct {
+	PoolConfigured bool   `json:"poolConfigured"`
+	PoolName       string `json:"poolName,omitempty"`
+	Backend        string `json:"backend,omitempty"`
+	AvailableBytes int64  `json:"availableBytes"`
+	TotalBytes     int64  `json:"totalBytes"`
+	Degraded       bool   `json:"degraded,omitempty"`
+}
+
+// GET /api/v1/instance-disk-capacity — capacity available for a new instance
+// disk drawn from the configured instance storage pool (e.g. a local LVM VG).
+func (s *Server) handleInstanceDiskCapacity(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "instance:run", "project:"+s.project); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	resp := instanceDiskCapacity{}
+	poolID := ""
+	if s.ctrl.Store.AdminConfig != nil {
+		if v, ok, _ := s.ctrl.Store.AdminConfig.Get(adminconfig.KeyDefaultInstancePool); ok {
+			poolID = v
+		}
+	}
+	if poolID != "" {
+		if pool, err := hoststorage.NewManager(s.ctrl.Store.HostStorage).GetPool(poolID); err == nil {
+			resp = instanceDiskCapacity{
+				PoolConfigured: true,
+				PoolName:       pool.Name,
+				Backend:        pool.Backend,
+				AvailableBytes: pool.AvailableBytes,
+				TotalBytes:     pool.TotalBytes,
+				Degraded:       pool.Health == hoststorage.PoolDegraded,
+			}
+		}
+	}
+	writeData(w, resp, nil)
 }
 
 func (s *Server) resolveInstanceTypeResources(r *http.Request, image, typeName string) (types.ResourceOverrides, error) {

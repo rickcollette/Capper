@@ -123,6 +123,26 @@ func TestLVMAllocateRelease(t *testing.T) {
 	}
 }
 
+func TestVGSizeIgnoresLeakedFDWarnings(t *testing.T) {
+	// vgs can emit "File descriptor N leaked" notices to stderr; CombinedOutput
+	// mixes them with the value. The size must still parse from the trailing token.
+	orig := lvmExec
+	lvmExec = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return []byte("File descriptor 6 (socket:[317230]) leaked on vgs invocation. Parent PID 46002: /usr/local/bin/capper\n" +
+			"File descriptor 7 (socket:[316365]) leaked on vgs invocation. Parent PID 46002: /usr/local/bin/capper\n" +
+			"  2000397795328\n"), nil
+	}
+	t.Cleanup(func() { lvmExec = orig })
+
+	n, err := vgSizeBytes(context.Background(), "capvg")
+	if err != nil {
+		t.Fatalf("vgSizeBytes: %v", err)
+	}
+	if n != 2000397795328 {
+		t.Fatalf("got %d, want 2000397795328", n)
+	}
+}
+
 func containsCall(calls []string, prefix string) bool {
 	for _, c := range calls {
 		if strings.HasPrefix(c, prefix) {

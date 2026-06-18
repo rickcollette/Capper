@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"capper/internal/network"
 	"capper/internal/types"
@@ -77,6 +78,27 @@ func (s *Server) handleDeleteNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.authorize(r, "network:delete", "network/"+n.Name); err != nil {
 		writeForbidden(w, err)
+		return
+	}
+	// Prune leases left behind by already-deleted instances, then block only on
+	// instances that still exist — and tell the operator exactly which ones.
+	attached, aerr := s.ctrl.Store.LiveNetworkAttachments(n.ID)
+	if aerr != nil {
+		writeInternal(w, aerr)
+		return
+	}
+	if len(attached) > 0 {
+		names := make([]string, 0, len(attached))
+		for _, a := range attached {
+			label := a.InstanceName
+			if label == "" {
+				label = a.InstanceID
+			}
+			names = append(names, fmt.Sprintf("%s (%s, %s)", label, a.IP, a.Status))
+		}
+		writeError(w, http.StatusConflict, fmt.Sprintf(
+			"network %q still has %d attached instance(s): %s — stop and delete (or disconnect) them first",
+			n.Name, len(attached), strings.Join(names, ", ")))
 		return
 	}
 	if err := network.NewManager(s.ctrl.Store.Networks).Delete(n.Name, s.project); err != nil {

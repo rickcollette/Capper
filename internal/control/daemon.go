@@ -126,6 +126,7 @@ func NewDaemon(st *store.Store, instMgr manager.InstanceManager, opts DaemonOpti
 	d.Reconcilers.Register(&staleBridgeReconciler{st: st})
 	d.Reconcilers.Register(&hostStorageReconciler{st: st})
 	d.Reconcilers.Register(&fail2banReconciler{st: st})
+	d.Reconcilers.Register(&orphanLeaseReconciler{st: st})
 	registerTopologyReconcilers(d, st)
 	return d
 }
@@ -397,6 +398,20 @@ func (r *hostStorageReconciler) Name() string { return "host-storage" }
 
 func (r *hostStorageReconciler) Reconcile(ctx context.Context) error {
 	return hoststorage.NewManager(r.st.HostStorage).Reconcile(ctx)
+}
+
+// orphanLeaseReconciler prunes network leases whose owning instance no longer
+// exists, so deleting an instance that skipped lease cleanup can't permanently
+// block its network's deletion or starve its IP pool.
+type orphanLeaseReconciler struct {
+	st *store.Store
+}
+
+func (r *orphanLeaseReconciler) Name() string { return "orphan-network-leases" }
+
+func (r *orphanLeaseReconciler) Reconcile(_ context.Context) error {
+	_, err := r.st.PruneOrphanedNetworkLeases()
+	return err
 }
 
 // fail2banReconciler re-applies the admin persistent blocklist so manually-added
