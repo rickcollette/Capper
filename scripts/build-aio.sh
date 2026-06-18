@@ -115,21 +115,32 @@ printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 # Sample image: build alpine.cap so a fresh node ships with at least one
 # launchable image. The .cap is backend-agnostic; built with the default
 # (sqlite) store in a throwaway dir, then staged into the bundle.
+# Sample base images: build alpine.cap (always) and alma.cap (if docker is
+# present) so a fresh node ships with launchable base images. capinit is staged
+# into each rootfs so it runs on boot. Built with the default (sqlite) store.
+build_sample_image() {
+  local key="$1" dir="examples/$1" cap="$1.cap"
+  [ -f "$dir/capper.json" ] || { echo "warning: $dir/capper.json missing — skipping $cap" >&2; return; }
+  say "Building sample image $cap"
+  sh "$dir/bootstrap.sh"
+  install -m 0755 bin/capinit "$dir/rootfs/sbin/capinit"
+  local work="$OUT_DIR/capwork"
+  rm -rf "$work"; mkdir -p "$work/store"
+  ./bin/capper --store "$work/store" create "$key" "$dir/capper.json"
+  cp "$work/store/images/$cap" "$STAGE/$cap"
+  rm -rf "$work"
+  echo "staged sample image: $cap ($(du -h "$STAGE/$cap" | cut -f1))"
+}
+
 if [ "${SKIP_IMAGE:-0}" = "1" ]; then
-  echo "SKIP_IMAGE=1 — not building the sample image"
-elif [ -f examples/alpine/capper.json ]; then
-  say "Building sample image alpine.cap"
-  make bootstrap-alpine
-  # Guest boot agent: capinit runs on boot to apply metadata (hostname etc.).
-  install -m 0755 bin/capinit examples/alpine/rootfs/sbin/capinit
-  CAPWORK="$OUT_DIR/capwork"
-  rm -rf "$CAPWORK"; mkdir -p "$CAPWORK/store"
-  ./bin/capper --store "$CAPWORK/store" create alpine examples/alpine/capper.json
-  cp "$CAPWORK/store/images/alpine.cap" "$STAGE/alpine.cap"
-  rm -rf "$CAPWORK"
-  echo "staged sample image: $(du -h "$STAGE/alpine.cap" | cut -f1)"
+  echo "SKIP_IMAGE=1 — not building sample images"
 else
-  echo "warning: examples/alpine/capper.json not found — bundling without a sample image" >&2
+  build_sample_image alpine
+  if command -v docker >/dev/null 2>&1; then
+    build_sample_image alma
+  else
+    echo "warning: docker not found — skipping the AlmaLinux sample image" >&2
+  fi
 fi
 
 cat > "$STAGE/README.md" <<EOF
