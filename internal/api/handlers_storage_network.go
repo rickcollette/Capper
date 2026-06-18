@@ -69,16 +69,21 @@ func (s *Server) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteNetwork(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if err := s.authorize(r, "network:delete", "network/"+name); err != nil {
+	nameOrID := r.PathValue("name")
+	n, err := s.ctrl.Store.Networks.Get(nameOrID, s.project)
+	if err != nil {
+		writeNotFound(w, "network not found")
+		return
+	}
+	if err := s.authorize(r, "network:delete", "network/"+n.Name); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-	if err := network.NewManager(s.ctrl.Store.Networks).Delete(name, s.project); err != nil {
+	if err := network.NewManager(s.ctrl.Store.Networks).Delete(n.Name, s.project); err != nil {
 		writeBadRequest(w, err)
 		return
 	}
-	s.recordEvent(r, "network", name, "network.deleted", nil)
+	s.recordEvent(r, "network", n.ID, "network.deleted", map[string]any{"name": n.Name})
 	w.WriteHeader(http.StatusNoContent)
 }
 

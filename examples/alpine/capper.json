@@ -1,14 +1,14 @@
 {
   "name": "alpine",
-  "version": "3.23.0",
+  "version": "3.20.0",
   "rootfs": "./rootfs",
-  "entrypoint": ["/sbin/capinit", "--", "/bin/sh"],
+  "entrypoint": ["/sbin/capinit", "--", "/bin/bash"],
   "args": ["-lc", "echo hello from alpine && cat /etc/alpine-release && exec sleep 3600"],
   "env": {
-    "PATH": "/bin:/sbin:/usr/bin:/usr/sbin"
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   },
   "workingDir": "/",
-  "shell": "/bin/sh",
+  "shell": "/bin/bash",
   "user": {
     "uid": 0,
     "gid": 0

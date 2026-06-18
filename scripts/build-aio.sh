@@ -115,9 +115,9 @@ printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 # Sample image: build alpine.cap so a fresh node ships with at least one
 # launchable image. The .cap is backend-agnostic; built with the default
 # (sqlite) store in a throwaway dir, then staged into the bundle.
-# Sample base images: build alpine.cap (always) and alma.cap (if docker is
-# present) so a fresh node ships with launchable base images. capinit is staged
-# into each rootfs so it runs on boot. Built with the default (sqlite) store.
+# Sample base images: build alpine.cap and alma.cap (both require docker) so a
+# fresh node ships with launchable base images. capinit is staged into each
+# rootfs so it runs on boot. Built with the default (sqlite) store.
 build_sample_image() {
   local key="$1" dir="examples/$1" cap="$1.cap"
   [ -f "$dir/capper.json" ] || { echo "warning: $dir/capper.json missing — skipping $cap" >&2; return; }
@@ -135,11 +135,11 @@ build_sample_image() {
 if [ "${SKIP_IMAGE:-0}" = "1" ]; then
   echo "SKIP_IMAGE=1 — not building sample images"
 else
-  build_sample_image alpine
   if command -v docker >/dev/null 2>&1; then
+    build_sample_image alpine
     build_sample_image alma
   else
-    echo "warning: docker not found — skipping the AlmaLinux sample image" >&2
+    echo "warning: docker not found — skipping alpine.cap and alma.cap sample images" >&2
   fi
 fi
 
