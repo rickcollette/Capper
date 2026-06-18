@@ -29,7 +29,10 @@ CAPPER_VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)
 CAPPER_COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 CAPPER_DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 VERSION_PKG    := capper/internal/version
-LDFLAGS        := -X $(VERSION_PKG).Version=$(CAPPER_VERSION) \
+# NB: named GO_LDFLAGS, not LDFLAGS — the latter is the C linker's env var and is
+# re-exported by make into sub-builds (e.g. CapDB's CMake), where these Go '-X'
+# flags would break the C compiler check.
+GO_LDFLAGS     := -X $(VERSION_PKG).Version=$(CAPPER_VERSION) \
                   -X $(VERSION_PKG).Commit=$(CAPPER_COMMIT) \
                   -X $(VERSION_PKG).BuildDate=$(CAPPER_DATE)
 
@@ -53,8 +56,8 @@ setcap:
 
 build:
 	mkdir -p $(BIN_DIR)
-	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP) ./cmd/capper
-	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP)-agent ./cmd/capper-agent
+	go build -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/$(APP) ./cmd/capper
+	go build -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/$(APP)-agent ./cmd/capper-agent
 
 # Build the control-plane binary with the CapDB networked backend linked in
 # (cgo + OpenSSL). This is the artifact to deploy when CapDB is the primary DB
@@ -64,7 +67,7 @@ build-capdb: capdb
 	CGO_ENABLED=1 \
 	  CGO_CFLAGS="$(CAPDB_CGO_CFLAGS)" \
 	  CGO_LDFLAGS="$(CAPDB_CGO_LDFLAGS)" \
-	  go build -tags capdb -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP) ./cmd/capper
+	  go build -tags capdb -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/$(APP) ./cmd/capper
 
 test:
 	go test ./...
