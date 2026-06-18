@@ -32,6 +32,7 @@ Description=Capper Control Plane
 After=network.target
 
 [Service]
+Environment=HOME=/root
 ExecStart=/usr/local/bin/capper api start
 Restart=on-failure
 RestartSec=5s
@@ -45,6 +46,7 @@ Description=Capper Node Agent
 After=capper-control.service
 
 [Service]
+Environment=HOME=/root
 ExecStart=/usr/local/bin/capper-agent --config /etc/capper/agent.yaml
 Restart=on-failure
 RestartSec=5s
@@ -77,6 +79,7 @@ After=network.target capdb-server.service
 Requires=capdb-server.service
 
 [Service]
+Environment=HOME=/root
 EnvironmentFile=/etc/capper/capdb.env
 ExecStart=/usr/local/bin/capper api start
 Restart=on-failure
