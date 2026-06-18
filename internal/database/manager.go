@@ -23,11 +23,18 @@ func (m *Manager) Create(name, project, engine, version, networkID string, port 
 	}
 	secretName := name + "-password-" + hex.EncodeToString(passBuf[:4])
 	now := time.Now().UTC().Format(time.RFC3339)
+	eng := DBEngine(engine)
+	if version == "" {
+		version = DefaultVersions[eng]
+	}
+	if port == 0 {
+		port = DefaultPorts[eng]
+	}
 	db := ManagedDB{
 		ID:         newID(),
 		Name:       name,
 		Project:    project,
-		Engine:     DBEngine(engine),
+		Engine:     eng,
 		Version:    version,
 		Status:     DBStatusProvisioning,
 		NetworkID:  networkID,

@@ -6,7 +6,11 @@ const (
 	EnginePostgres DBEngine = "postgres"
 	EngineRedis    DBEngine = "redis"
 	EngineMariaDB  DBEngine = "mariadb"
+	EngineCapDB    DBEngine = "capdb"
 )
+
+// Engines is the set of supported database engines.
+var Engines = []DBEngine{EnginePostgres, EngineRedis, EngineMariaDB, EngineCapDB}
 
 type DBStatus string
 
@@ -50,6 +54,7 @@ var DefaultPorts = map[DBEngine]int{
 	EnginePostgres: 5432,
 	EngineRedis:    6379,
 	EngineMariaDB:  3306,
+	EngineCapDB:    5432,
 }
 
 // DefaultVersions maps engine types to their default versions.
@@ -57,4 +62,5 @@ var DefaultVersions = map[DBEngine]string{
 	EnginePostgres: "16",
 	EngineRedis:    "7",
 	EngineMariaDB:  "11",
+	EngineCapDB:    "1",
 }
