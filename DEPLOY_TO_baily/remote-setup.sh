@@ -223,15 +223,16 @@ else
     && ok "default network created" || die "default network create failed"
 fi
 
-# Seed a sample image so the node ships with at least one launchable .cap.
-CAP_SRC="$REMOTE_TMP/$PKG/alpine.cap"
-if [ -f "$CAP_SRC" ]; then
-  # Always (re)upload so image updates (e.g. capinit, profile) ship; upsert by name.
-  say "Uploading sample image (alpine.cap)"
+# Seed the base images shipped in the bundle (alpine, alma, …). Always
+# (re)upload so image updates ship; upsert by name.
+for cap in "$REMOTE_TMP/$PKG"/*.cap; do
+  [ -f "$cap" ] || continue
+  nm="$(basename "$cap" .cap)"
+  say "Uploading base image ($nm)"
   curl -fsS -H "Authorization: Bearer ${CAPPER_BEARER}" \
-    -F file=@"$CAP_SRC" -F name=alpine "$base/images/upload" >/dev/null \
-    && ok "alpine image registered" || die "image upload failed"
-fi
+    -F file=@"$cap" -F name="$nm" "$base/images/upload" >/dev/null \
+    && ok "image '$nm' registered" || die "image upload failed: $nm"
+done
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Google SSO via oauth2-proxy (only when credentials supplied)
