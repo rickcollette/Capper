@@ -3,7 +3,9 @@
 //
 // Principal model: users, groups (sets of users), service accounts.
 // Permission model: policies (sets of statements) attached to roles;
-//   roles granted to principals with an optional resource scope.
+//
+//	roles granted to principals with an optional resource scope.
+//
 // Audit: every Authorize call is recorded in iam_audit.
 package iam
 
@@ -26,16 +28,29 @@ const (
 	EffectDeny  = "deny"
 )
 
-// User is a human principal, typically mapped to a local OS account.
+// User is a human principal, typically mapped to a local OS account or an
+// external identity (e.g. a Google SSO email).
 type User struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Email     string   `json:"email,omitempty"`
-	AccountID string   `json:"accountId,omitempty"`
-	LocalUser string   `json:"localUser,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Email     string `json:"email,omitempty"`
+	AccountID string `json:"accountId,omitempty"`
+	LocalUser string `json:"localUser,omitempty"`
+	// Status is the access lifecycle state: "active", "pending" (awaiting admin
+	// approval), or "disabled". Defaults to "active" for legacy/local users.
+	Status string `json:"status,omitempty"`
+	// Provider is the identity source: "local" (OS/CLI) or "google" (SSO).
+	Provider  string   `json:"provider,omitempty"`
 	Groups    []string `json:"groups,omitempty"`
 	CreatedAt string   `json:"createdAt"`
 }
+
+// User status values.
+const (
+	UserStatusActive   = "active"
+	UserStatusPending  = "pending"
+	UserStatusDisabled = "disabled"
+)
 
 // Group is a named set of users. Policies can be granted to groups.
 type Group struct {

@@ -119,6 +119,9 @@ func InitSchema(db *sql.DB) error {
 		`ALTER TABLE iam_service_accounts ADD COLUMN account_id TEXT NOT NULL DEFAULT 'acct_local'`,
 		`ALTER TABLE iam_service_accounts ADD COLUMN description TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE iam_users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE iam_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
+		`ALTER TABLE iam_users ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'`,
+		`ALTER TABLE iam_users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -130,25 +133,39 @@ func InitSchema(db *sql.DB) error {
 
 // ---- users ------------------------------------------------------------------
 
+// userColumns is the canonical column list/scan order for full User rows.
+const userColumns = `id, name, email, local_user, status, provider, created_at`
+
+func scanUser(sc interface{ Scan(...any) error }) (User, error) {
+	var u User
+	err := sc.Scan(&u.ID, &u.Name, &u.Email, &u.LocalUser, &u.Status, &u.Provider, &u.CreatedAt)
+	return u, err
+}
+
 func (s *Store) InsertUser(u User) error {
-	now := time.Now().UTC().Format(time.RFC3339)
 	if u.CreatedAt == "" {
-		u.CreatedAt = now
+		u.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if u.Status == "" {
+		u.Status = UserStatusActive
+	}
+	if u.Provider == "" {
+		u.Provider = "local"
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO iam_users(id, name, local_user, created_at) VALUES(?,?,?,?)`,
-		u.ID, u.Name, u.LocalUser, u.CreatedAt,
+		`INSERT INTO iam_users(id, name, email, local_user, status, provider, created_at) VALUES(?,?,?,?,?,?,?)`,
+		u.ID, u.Name, u.Email, u.LocalUser, u.Status, u.Provider, u.CreatedAt,
 	)
 	return err
 }
 
 func (s *Store) GetUser(nameOrID string) (User, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, local_user, created_at FROM iam_users WHERE id=? OR name=? LIMIT 1`,
+		`SELECT `+userColumns+` FROM iam_users WHERE id=? OR name=? LIMIT 1`,
 		nameOrID, nameOrID,
 	)
-	var u User
-	if err := row.Scan(&u.ID, &u.Name, &u.LocalUser, &u.CreatedAt); err != nil {
+	u, err := scanUser(row)
+	if err != nil {
 		return User{}, notFound("user", nameOrID, err)
 	}
 	u.Groups, _ = s.groupsForUser(u.ID)
@@ -157,26 +174,90 @@ func (s *Store) GetUser(nameOrID string) (User, error) {
 
 func (s *Store) GetUserByLocalUser(localUser string) (User, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, local_user, created_at FROM iam_users WHERE local_user=? LIMIT 1`,
+		`SELECT `+userColumns+` FROM iam_users WHERE local_user=? LIMIT 1`,
 		localUser,
 	)
-	var u User
-	if err := row.Scan(&u.ID, &u.Name, &u.LocalUser, &u.CreatedAt); err != nil {
+	u, err := scanUser(row)
+	if err != nil {
 		return User{}, notFound("user", localUser, err)
 	}
 	return u, nil
 }
 
+// GetUserByEmail looks up a user by their (case-insensitive) email address.
+func (s *Store) GetUserByEmail(email string) (User, error) {
+	row := s.db.QueryRow(
+		`SELECT `+userColumns+` FROM iam_users WHERE email<>'' AND lower(email)=lower(?) LIMIT 1`,
+		email,
+	)
+	u, err := scanUser(row)
+	if err != nil {
+		return User{}, notFound("user", email, err)
+	}
+	u.Groups, _ = s.groupsForUser(u.ID)
+	return u, nil
+}
+
+// CountUsers returns the total number of user records.
+func (s *Store) CountUsers() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM iam_users`).Scan(&n)
+	return n, err
+}
+
+// CountUsersByProvider counts users created via a given identity provider. Used
+// to detect the first SSO (e.g. "google") login — which is promoted to admin —
+// without counting the local CLI/OS user that Bootstrap always creates.
+func (s *Store) CountUsersByProvider(provider string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM iam_users WHERE provider=?`, provider).Scan(&n)
+	return n, err
+}
+
+// SetPasswordHash stores a user's password hash (empty disables password login).
+func (s *Store) SetPasswordHash(idOrName, hash string) error {
+	res, err := s.db.Exec(`UPDATE iam_users SET password_hash=? WHERE id=? OR name=?`, hash, idOrName, idOrName)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return notFound("user", idOrName, sql.ErrNoRows)
+	}
+	return nil
+}
+
+// GetPasswordHash returns the stored password hash for a user (by id or name).
+func (s *Store) GetPasswordHash(idOrName string) (string, error) {
+	var h string
+	err := s.db.QueryRow(`SELECT password_hash FROM iam_users WHERE id=? OR name=? LIMIT 1`, idOrName, idOrName).Scan(&h)
+	if err != nil {
+		return "", notFound("user", idOrName, err)
+	}
+	return h, nil
+}
+
+// SetUserStatus updates a user's access lifecycle state.
+func (s *Store) SetUserStatus(idOrName, status string) error {
+	res, err := s.db.Exec(`UPDATE iam_users SET status=? WHERE id=? OR name=?`, status, idOrName, idOrName)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return notFound("user", idOrName, sql.ErrNoRows)
+	}
+	return nil
+}
+
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id, name, local_user, created_at FROM iam_users ORDER BY name`)
+	rows, err := s.db.Query(`SELECT ` + userColumns + ` FROM iam_users ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []User
 	for rows.Next() {
-		var u User
-		if err := rows.Scan(&u.ID, &u.Name, &u.LocalUser, &u.CreatedAt); err != nil {
+		u, err := scanUser(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, u)

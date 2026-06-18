@@ -92,6 +92,26 @@ func (s *Server) handleAuthSessionInfo(w http.ResponseWriter, r *http.Request) {
 	writeData(w, map[string]any{"authenticated": false}, nil)
 }
 
+// issueSession mints a session for a principal: it issues a bearer token (the
+// session cookie value, verified by the auth middleware) and sets the session +
+// CSRF cookies. Returns the CSRF token for the client to echo on mutations.
+func (s *Server) issueSession(w http.ResponseWriter, pt, pid string, ttl time.Duration) (string, error) {
+	bearer, _, err := s.ctrl.Store.IAM.Issue("session", pt, pid, ttl)
+	if err != nil {
+		return "", err
+	}
+	csrf, _ := randomToken(16)
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookieName, Value: bearer, Path: "/",
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: int(ttl.Seconds()),
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name: csrfCookieName, Value: csrf, Path: "/",
+		Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: int(ttl.Seconds()),
+	})
+	return csrf, nil
+}
+
 func randomToken(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
