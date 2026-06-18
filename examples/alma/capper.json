@@ -1,9 +1,9 @@
 {
   "name": "alma",
-  "version": "9",
+  "version": "8",
   "rootfs": "./rootfs",
   "entrypoint": ["/sbin/capinit", "--", "/bin/bash"],
-  "args": ["-lc", "echo hello from almalinux && cat /etc/almalinux-release && exec sleep 3600"],
+  "args": ["-lc", "echo hello from almalinux && cat /etc/almalinux-release 2>/dev/null || cat /etc/redhat-release && exec sleep 3600"],
   "env": {
     "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   },

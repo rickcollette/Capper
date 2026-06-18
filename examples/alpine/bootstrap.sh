@@ -50,15 +50,6 @@ docker run --name "$name" "$img" sh -c '
     find / -name "*busybox*" 2>/dev/null >&2
     exit 1
   fi
-
-  mkdir -p /etc/profile.d
-  cat > /etc/profile.d/capper-tools.sh <<EOF
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-EOF
-  cat > /etc/profile <<EOF
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export PS1='\u@\h:\w# '
-EOF
 ' >/dev/null
 
 rm -rf rootfs && mkdir rootfs
@@ -66,6 +57,17 @@ docker export "$name" | tar -x -C rootfs 2>/dev/null
 docker rm -f "$name" >/dev/null
 
 chmod -R u+rwX rootfs
+
+# Write profile snippets from the host so PS1 backslashes are not eaten by sh
+# heredocs inside the docker build container.
+mkdir -p rootfs/etc/profile.d
+cat > rootfs/etc/profile.d/capper-tools.sh <<'EOF'
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EOF
+cat > rootfs/etc/profile.d/capper-prompt.sh <<'EOF'
+# Capper login prompt: user@hostname:cwd#
+export PS1='\u@\h:\w# '
+EOF
 
 # apk DB still lists busybox packages from the transient install layer; scrub
 # those records so the shipped rootfs does not advertise busybox.

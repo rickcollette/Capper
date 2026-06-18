@@ -74,7 +74,7 @@ elif [ -d "$CAPPERWEB_DIR" ]; then
   say "Building web console ($CAPPERWEB_DIR, profile=aio)"
   # VITE_PROFILE=aio strips cluster/multi-server features (topology, compute
   # groups, VPCs, marketplace, orgs, governance) from the single-node console.
-  ( cd "$CAPPERWEB_DIR" && npm ci && VITE_PROFILE=aio VITE_CAPPER_VERSION="$VERSION" npm run build )
+  ( cd "$CAPPERWEB_DIR" && VITE_PROFILE=aio VITE_CAPPER_VERSION="$VERSION" scripts/build.sh )
 else
   echo "warning: CapperWeb not found at $CAPPERWEB_DIR — packaging without a console" >&2
 fi
