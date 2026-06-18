@@ -44,4 +44,51 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export PS1='\u@\h:\w# '
 PROF
 
+# free(1) that reads /proc/meminfo (which Capper masks per-instance) instead of
+# the sysinfo() syscall busybox uses — so memory reflects the capsule's limit,
+# not the host. Replace the busybox 'free' symlink (-> /bin/busybox) with a real
+# file; rm -f first so we don't write THROUGH the symlink.
+rm -f rootfs/usr/bin/free rootfs/bin/free
+cat > rootfs/usr/bin/free <<'FREE'
+#!/bin/sh
+mode=k
+for a in "$@"; do
+  case "$a" in
+    -h|--human) mode=h ;;
+    -b|--bytes) mode=b ;;
+    -k|--kilo)  mode=k ;;
+    -m|--mega)  mode=m ;;
+    -g|--giga)  mode=g ;;
+  esac
+done
+awk -v mode="$mode" '
+function fmt(kb,   b,u) {
+  if (mode=="k") return sprintf("%d", kb)
+  if (mode=="m") return sprintf("%d", kb/1024)
+  if (mode=="g") return sprintf("%d", kb/1048576)
+  if (mode=="b") return sprintf("%d", kb*1024)
+  b=kb*1024; u="B"
+  if (b>=1024){b/=1024;u="K"}
+  if (b>=1024){b/=1024;u="M"}
+  if (b>=1024){b/=1024;u="G"}
+  if (b>=1024){b/=1024;u="T"}
+  return sprintf("%.1f%s", b, u)
+}
+/^MemTotal:/     {t=$2}
+/^MemFree:/      {f=$2}
+/^MemAvailable:/ {av=$2}
+/^Buffers:/      {bu=$2}
+/^Cached:/       {ca=$2}
+/^SwapTotal:/    {st=$2}
+/^SwapFree:/     {sf=$2}
+END {
+  used=t-f-bu-ca; if (used<0) used=0
+  printf "%-10s %12s %12s %12s %12s %12s %12s\n","","total","used","free","shared","buff/cache","available"
+  printf "%-10s %12s %12s %12s %12s %12s %12s\n","Mem:",fmt(t),fmt(used),fmt(f),fmt(0),fmt(bu+ca),fmt(av)
+  printf "%-10s %12s %12s %12s\n","Swap:",fmt(st),fmt(st-sf),fmt(sf)
+}' /proc/meminfo
+FREE
+chmod 0755 rootfs/usr/bin/free
+cp rootfs/usr/bin/free rootfs/bin/free
+
 echo "Alpine rootfs ready at examples/alpine/rootfs (${tarball})"
