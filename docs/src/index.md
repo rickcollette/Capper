@@ -12,7 +12,7 @@ outputs:
 
 # Capper Documentation
 
-Capper is a Go-based homelab and enterprise private cloud platform — an AWS-like control plane and runtime stack you own and operate.
+Capper is a Go-based homelab and enterprise private cloud platform — a control plane and runtime stack you own and operate.
 
 ## What is Capper?
 
