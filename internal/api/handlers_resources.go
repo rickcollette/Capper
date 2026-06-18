@@ -6,6 +6,7 @@ import (
 
 	"capper/internal/backup"
 	"capper/internal/firewall"
+	"capper/internal/manager"
 	"capper/internal/lb"
 	"capper/internal/stack"
 )
@@ -520,11 +521,15 @@ func (s *Server) handleCreateDatabase(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, err)
 		return
 	}
-	db, err := s.ctrl.Store.Databases.Create(req.Name, s.project, req.Engine, req.Version, req.NetworkID, req.Port)
+	db, err := manager.CreateManagedDatabase(
+		s.ctrl.Store, s.ctrl.Instances, s.ctrl.Store.Metadata,
+		req.Name, s.project, req.Engine, req.Version, req.NetworkID, req.Port,
+	)
 	if err != nil {
 		writeBadRequest(w, err)
 		return
 	}
+	s.recordEvent(r, "database", db.ID, "database.created", map[string]any{"engine": db.Engine, "instanceId": db.InstanceID})
 	writeJSON(w, http.StatusCreated, Envelope{Data: db})
 }
 
@@ -548,10 +553,12 @@ func (s *Server) handleDeleteDatabase(w http.ResponseWriter, r *http.Request) {
 		writeForbidden(w, err)
 		return
 	}
-	if err := s.ctrl.Store.Databases.Delete(name, s.project); err != nil {
+	db, err := manager.DeleteManagedDatabase(s.ctrl.Store, s.ctrl.Instances, name, s.project)
+	if err != nil {
 		writeBadRequest(w, err)
 		return
 	}
+	s.recordEvent(r, "database", db.ID, "database.deleted", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 

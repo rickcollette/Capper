@@ -13,17 +13,21 @@ type Manager struct {
 
 func NewManager(s *Store) *Manager { return &Manager{store: s} }
 
-func (m *Manager) Create(name, project, engine, version, networkID string, port int) (ManagedDB, error) {
+func (m *Manager) Create(name, project, engine, version, networkID string, port int) (ManagedDB, string, error) {
 	if name == "" {
-		return ManagedDB{}, fmt.Errorf("database: name is required")
+		return ManagedDB{}, "", fmt.Errorf("database: name is required")
+	}
+	eng := DBEngine(engine)
+	if !engineSupported(eng) {
+		return ManagedDB{}, "", fmt.Errorf("database: unsupported engine %q", engine)
 	}
 	passBuf := make([]byte, 16)
 	if _, err := rand.Read(passBuf); err != nil {
-		return ManagedDB{}, fmt.Errorf("database: generate password: %w", err)
+		return ManagedDB{}, "", fmt.Errorf("database: generate password: %w", err)
 	}
+	password := hex.EncodeToString(passBuf)
 	secretName := name + "-password-" + hex.EncodeToString(passBuf[:4])
 	now := time.Now().UTC().Format(time.RFC3339)
-	eng := DBEngine(engine)
 	if version == "" {
 		version = DefaultVersions[eng]
 	}
@@ -43,9 +47,22 @@ func (m *Manager) Create(name, project, engine, version, networkID string, port 
 		CreatedAt:  now,
 	}
 	if err := m.store.Insert(db); err != nil {
-		return ManagedDB{}, fmt.Errorf("database: store: %w", err)
+		return ManagedDB{}, "", fmt.Errorf("database: store: %w", err)
 	}
-	return db, nil
+	return db, password, nil
+}
+
+func engineSupported(eng DBEngine) bool {
+	for _, e := range Engines {
+		if e == eng {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) UpdateInstanceID(id, instanceID string, status DBStatus) error {
+	return m.store.UpdateInstanceID(id, instanceID, status)
 }
 
 func (m *Manager) Get(nameOrID, project string) (ManagedDB, error) {
@@ -137,7 +154,7 @@ func (m *Manager) RestoreIntoNew(backupID, targetName, project, engine, version,
 	if targetConnectionString == "" {
 		return ManagedDB{}, fmt.Errorf("database: target connection string is required")
 	}
-	db, err := m.Create(targetName, project, engine, version, networkID, port)
+	db, _, err := m.Create(targetName, project, engine, version, networkID, port)
 	if err != nil {
 		return ManagedDB{}, err
 	}

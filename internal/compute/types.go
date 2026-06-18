@@ -101,6 +101,7 @@ type InstanceType struct {
 	Family      string `json:"family"` // memory, compute, gpu
 	CPUCount    int    `json:"cpuCount"`
 	MemoryBytes int64  `json:"memoryBytes"`
+	DiskBytes   int64  `json:"diskBytes"`
 	PIDLimit    int    `json:"pidLimit"`
 	GPUEligible bool   `json:"gpuEligible"`
 	GPUCount    int    `json:"gpuCount"`
@@ -110,9 +111,10 @@ type InstanceType struct {
 }
 
 const (
-	InstanceTypeFamilyMemory  = "memory"
-	InstanceTypeFamilyCompute = "compute"
-	InstanceTypeFamilyGPU     = "gpu"
+	InstanceTypeFamilyMemory   = "memory"
+	InstanceTypeFamilyCompute  = "compute"
+	InstanceTypeFamilyGPU      = "gpu"
+	InstanceTypeFamilyStandard = "standard"
 )
 
 // GPUDevice is a GPU available for passthrough assignment.

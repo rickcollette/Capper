@@ -25,7 +25,7 @@ func newManager(t *testing.T) *database.Manager {
 
 func TestCreateAndListBackups(t *testing.T) {
 	mgr := newManager(t)
-	db, err := mgr.Create("mydb", "default", string(database.EnginePostgres), "16", "", 5432)
+	db, _, err := mgr.Create("mydb", "default", string(database.EnginePostgres), "16", "", 5432)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestCreateAndListBackups(t *testing.T) {
 
 func TestBackupExecutorFailure(t *testing.T) {
 	mgr := newManager(t)
-	db, _ := mgr.Create("faildb", "default", string(database.EnginePostgres), "16", "", 5432)
+	db, _, _ := mgr.Create("faildb", "default", string(database.EnginePostgres), "16", "", 5432)
 	_, err := mgr.CreateBackup(db.Name, "default", "full", func(d database.ManagedDB) (string, int64, error) {
 		return "", 0, fmt.Errorf("disk full")
 	})
@@ -71,7 +71,7 @@ func TestBackupExecutorFailure(t *testing.T) {
 
 func TestDeleteBackup(t *testing.T) {
 	mgr := newManager(t)
-	db, _ := mgr.Create("deldb", "default", string(database.EnginePostgres), "16", "", 5432)
+	db, _, _ := mgr.Create("deldb", "default", string(database.EnginePostgres), "16", "", 5432)
 	bk, _ := mgr.CreateBackup(db.Name, "default", "full", func(d database.ManagedDB) (string, int64, error) {
 		return "/backups/x.dump", 512, nil
 	})

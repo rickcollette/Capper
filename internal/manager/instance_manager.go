@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"capper/internal/cgroup"
+	"capper/internal/diskquota"
 	"capper/internal/loader"
 	"capper/internal/network"
 	"capper/internal/runtime"
@@ -40,6 +41,8 @@ type RunOptions struct {
 	Network       *NetworkRunOpts     // optional; nil means no network attachment
 	Env           map[string]string   // extra env vars merged over manifest env (e.g. injected secrets)
 	Labels        map[string]string   // metadata labels attached to the instance at launch
+	Entrypoint    []string            // optional entrypoint override
+	Args          []string            // optional args override (used with Entrypoint)
 }
 
 func (m InstanceManager) Run(imageName string, resources types.ResourceOverrides, opts RunOptions) (*types.Instance, error) {
@@ -49,6 +52,9 @@ func (m InstanceManager) Run(imageName string, resources types.ResourceOverrides
 		project = "default"
 	}
 	if err := m.Store.Billing.CheckQuota(project, "instance"); err != nil {
+		return nil, err
+	}
+	if err := m.Store.CheckHostDeployLimit(); err != nil {
 		return nil, err
 	}
 
@@ -107,6 +113,10 @@ func (m InstanceManager) Run(imageName string, resources types.ResourceOverrides
 		effectiveResources = resources.Apply(effectiveResources)
 	}
 	loaded.Manifest.Resources = effectiveResources
+	if err := diskquota.SetupOverlay(instDir, effectiveResources.DiskBytes); err != nil {
+		_ = os.RemoveAll(instDir)
+		return nil, err
+	}
 	// Generate masked /proc files so guests see only their own resource allocation.
 	_ = runtime.WriteProcOverrides(instDir, effectiveResources)
 	if len(opts.Mounts) > 0 {
@@ -150,6 +160,14 @@ func (m InstanceManager) Run(imageName string, resources types.ResourceOverrides
 	}
 	if len(opts.Labels) > 0 {
 		inst.Labels = opts.Labels
+	}
+	if len(opts.Entrypoint) > 0 {
+		loaded.Manifest.Entrypoint = opts.Entrypoint
+		loaded.Manifest.Args = opts.Args
+		inst.Entrypoint = opts.Entrypoint
+		inst.Args = opts.Args
+		cmd := strings.Join(append(append([]string{}, opts.Entrypoint...), opts.Args...), " ")
+		inst.Command = cmd
 	}
 
 	// Network attachment: allocate IP, create veth pair, configure named netns,
@@ -279,6 +297,7 @@ func (m InstanceManager) Remove(ref string) error {
 		return fmt.Errorf("cannot remove running instance: stop it first")
 	}
 	instDir := filepath.Dir(inst.RootFSPath)
+	diskquota.Teardown(instDir)
 	m.detachNetwork(inst) // best-effort: tear down netns/veth/IPAM lease
 	if err := os.RemoveAll(instDir); err != nil && !os.IsNotExist(err) {
 		return err

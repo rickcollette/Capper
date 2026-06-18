@@ -1,0 +1,58 @@
+package manager
+
+import (
+	"fmt"
+	"time"
+
+	"capper/internal/database"
+	"capper/internal/metadata"
+	"capper/internal/store"
+)
+
+// CreateManagedDatabase registers a managed DB, stores its password secret, and
+// launches the hidden alpine instance that runs the engine.
+func CreateManagedDatabase(st *store.Store, im InstanceManager, meta *metadata.Manager, name, project, engine, version, networkID string, port int) (database.ManagedDB, error) {
+	if err := st.CheckHostDeployLimit(); err != nil {
+		return database.ManagedDB{}, err
+	}
+	db, password, err := st.Databases.Create(name, project, engine, version, networkID, port)
+	if err != nil {
+		return database.ManagedDB{}, err
+	}
+	if _, err := st.Secrets.Create(db.SecretName, project, "managed database password", password); err != nil {
+		_ = st.Databases.Delete(db.Name, project)
+		return database.ManagedDB{}, fmt.Errorf("database: store password secret: %w", err)
+	}
+	instanceID, err := im.ProvisionDatabase(meta, db, project, password, "alpine")
+	if err != nil {
+		_ = st.Secrets.Delete(db.SecretName, project)
+		_ = st.Databases.Delete(db.Name, project)
+		return database.ManagedDB{}, err
+	}
+	if err := st.Databases.UpdateInstanceID(db.ID, instanceID, database.DBStatusRunning); err != nil {
+		return database.ManagedDB{}, err
+	}
+	db.InstanceID = instanceID
+	db.Status = database.DBStatusRunning
+	return db, nil
+}
+
+// DeleteManagedDatabase removes the backing instance, secret, and DB record.
+func DeleteManagedDatabase(st *store.Store, im InstanceManager, nameOrID, project string) (database.ManagedDB, error) {
+	db, err := st.Databases.Get(nameOrID, project)
+	if err != nil {
+		return database.ManagedDB{}, err
+	}
+	if db.InstanceID != "" {
+		if _, _, stopErr := im.Stop(db.InstanceID, 5*time.Second, true); stopErr == nil {
+			_ = im.Remove(db.InstanceID)
+		}
+	}
+	if db.SecretName != "" {
+		_ = st.Secrets.Delete(db.SecretName, project)
+	}
+	if err := st.Databases.Delete(nameOrID, project); err != nil {
+		return database.ManagedDB{}, err
+	}
+	return db, nil
+}

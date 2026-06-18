@@ -7456,28 +7456,33 @@ func dbCreateCmd(opts *options) *cobra.Command {
 		Short: "create a managed database",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withIAM(opts, func(ac *iamCtx) error {
-				if err := ac.Authorize("db:create", "project:"+opts.project); err != nil {
-					return err
-				}
-				if engine == "" {
-					return fmt.Errorf("--engine is required (postgres, redis, mariadb)")
-				}
-				db, err := ac.Store.Databases.Create(args[0], opts.project, engine, version, network, port)
-				if err != nil {
-					return err
-				}
-				ac.RecordEvent("database", db.ID, "db.created", opts.project, map[string]any{"name": db.Name, "engine": db.Engine})
-				if opts.json {
-					return printJSON(db)
-				}
-				fmt.Printf("Database created\n\nName:    %s\nID:      %s\nEngine:  %s\nStatus:  %s\nProject: %s\n",
-					db.Name, db.ID, db.Engine, db.Status, db.Project)
-				return nil
+			return withController(opts, func(ctrl controller.Controller) error {
+				return withIAM(opts, func(ac *iamCtx) error {
+					if err := ac.Authorize("db:create", "project:"+opts.project); err != nil {
+						return err
+					}
+					if engine == "" {
+						return fmt.Errorf("--engine is required (postgres, redis, mariadb, capdb)")
+					}
+					db, err := manager.CreateManagedDatabase(
+						ac.Store, ctrl.Instances, ac.Store.Metadata,
+						args[0], opts.project, engine, version, network, port,
+					)
+					if err != nil {
+						return err
+					}
+					ac.RecordEvent("database", db.ID, "db.created", opts.project, map[string]any{"name": db.Name, "engine": db.Engine, "instanceId": db.InstanceID})
+					if opts.json {
+						return printJSON(db)
+					}
+					fmt.Printf("Database created\n\nName:       %s\nID:         %s\nEngine:     %s\nStatus:     %s\nInstance:   %s\nProject:    %s\n",
+						db.Name, db.ID, db.Engine, db.Status, db.InstanceID, db.Project)
+					return nil
+				})
 			})
 		},
 	}
-	cmd.Flags().StringVar(&engine, "engine", "", "database engine: postgres, redis, or mariadb (required)")
+	cmd.Flags().StringVar(&engine, "engine", "", "database engine: postgres, redis, mariadb, or capdb (required)")
 	cmd.Flags().StringVar(&network, "network", "", "attach to virtual network (name or ID)")
 	cmd.Flags().StringVar(&version, "version", "", "engine version (optional)")
 	cmd.Flags().IntVar(&port, "port", 0, "database port (optional)")
@@ -7585,20 +7590,19 @@ func dbDeleteCmd(opts *options) *cobra.Command {
 		Short: "delete a managed database",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withIAM(opts, func(ac *iamCtx) error {
-				if err := ac.Authorize("db:delete", "project:"+opts.project); err != nil {
-					return err
-				}
-				db, err := ac.Store.Databases.Get(args[0], opts.project)
-				if err != nil {
-					return err
-				}
-				if err := ac.Store.Databases.Delete(args[0], opts.project); err != nil {
-					return err
-				}
-				ac.RecordEvent("database", db.ID, "db.deleted", opts.project, map[string]any{"name": db.Name})
-				fmt.Printf("Deleted database %q\n", args[0])
-				return nil
+			return withController(opts, func(ctrl controller.Controller) error {
+				return withIAM(opts, func(ac *iamCtx) error {
+					if err := ac.Authorize("db:delete", "project:"+opts.project); err != nil {
+						return err
+					}
+					db, err := manager.DeleteManagedDatabase(ac.Store, ctrl.Instances, args[0], opts.project)
+					if err != nil {
+						return err
+					}
+					ac.RecordEvent("database", db.ID, "db.deleted", opts.project, map[string]any{"name": db.Name})
+					fmt.Printf("Deleted database %q\n", args[0])
+					return nil
+				})
 			})
 		},
 	}
