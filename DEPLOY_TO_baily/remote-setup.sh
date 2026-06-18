@@ -53,7 +53,8 @@ say "Installing OS dependencies"
 apt-get update -qq
 apt-get install -y -qq \
   openssl libssl3 ca-certificates curl tar python3 \
-  nginx certbot
+  nginx certbot \
+  bubblewrap crun
 ok "deps installed"
 
 # Whitelist the deploy network in fail2ban so repeated SSH/scp sessions during a
@@ -109,7 +110,9 @@ Environment=HOME=/root
 # Written by the SSO step below; absent on non-SSO deploys.
 EnvironmentFile=-/etc/capper/control.env
 ExecStart=
-ExecStart=/usr/local/bin/capper api start --with-daemon --listen ${CONTROL_ADDR} --console ${CONSOLE_LINK}
+# --runtime bwrap: use the bubblewrap runtime explicitly so a missing/broken
+# runtime fails loudly instead of silently degrading to chroot.
+ExecStart=/usr/local/bin/capper --runtime bwrap api start --with-daemon --listen ${CONTROL_ADDR} --console ${CONSOLE_LINK}
 EOF
 install -d -m 0755 /etc/systemd/system/capper-agent.service.d
 cat > /etc/systemd/system/capper-agent.service.d/20-home.conf <<EOF
