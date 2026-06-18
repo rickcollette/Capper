@@ -201,6 +201,103 @@ func ipReleaseCmd(opts *options) *cobra.Command {
 	}
 }
 
+// ipExclusionCmd implements `capper ip-exclusion` — admin-managed addresses
+// kept out of auto-allocation (e.g. an address used by the Capper Server Host).
+func ipExclusionCmd(opts *options) *cobra.Command {
+	cmd := &cobra.Command{Use: "ip-exclusion", Short: "manage admin IP exclusions (unlist addresses)"}
+	cmd.AddCommand(ipExclusionAddCmd(opts), ipExclusionListCmd(opts), ipExclusionRemoveCmd(opts))
+	return cmd
+}
+
+func ipExclusionAddCmd(opts *options) *cobra.Command {
+	var pool, reason string
+	cmd := &cobra.Command{
+		Use:   "add ADDRESS",
+		Short: "unlist an address so it is never auto-allocated",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withStore(opts, func(st *store.Store) error {
+				poolID := ""
+				if pool != "" {
+					p, err := st.IPAM.GetPool(pool)
+					if err != nil {
+						return err
+					}
+					poolID = p.ID
+				}
+				excl, err := ipam.NewManager(st.IPAM).AddExclusion(ipam.IPExclusion{
+					Address: args[0], PoolID: poolID, Reason: reason, CreatedBy: opts.project,
+				})
+				if err != nil {
+					return err
+				}
+				if opts.json {
+					return printJSON(excl)
+				}
+				fmt.Printf("Excluded %s (%s)\n", excl.Address, excl.ID)
+				return nil
+			})
+		},
+	}
+	cmd.Flags().StringVar(&pool, "pool", "", "scope to a pool (default: global)")
+	cmd.Flags().StringVar(&reason, "reason", "", "why the address is excluded")
+	return cmd
+}
+
+func ipExclusionListCmd(opts *options) *cobra.Command {
+	var pool string
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "list IP exclusions",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withStore(opts, func(st *store.Store) error {
+				poolID := ""
+				if pool != "" {
+					if p, err := st.IPAM.GetPool(pool); err == nil {
+						poolID = p.ID
+					}
+				}
+				excl, err := st.IPAM.ListExclusions(poolID)
+				if err != nil {
+					return err
+				}
+				if opts.json {
+					return printJSON(excl)
+				}
+				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(tw, "ADDRESS\tPOOL\tREASON\tID")
+				for _, e := range excl {
+					scope := e.PoolID
+					if scope == "" {
+						scope = "(global)"
+					}
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Address, scope, e.Reason, e.ID)
+				}
+				return tw.Flush()
+			})
+		},
+	}
+	cmd.Flags().StringVar(&pool, "pool", "", "filter to a pool (includes global)")
+	return cmd
+}
+
+func ipExclusionRemoveCmd(opts *options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove ID",
+		Short: "re-list a previously excluded address",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withStore(opts, func(st *store.Store) error {
+				if err := ipam.NewManager(st.IPAM).RemoveExclusion(args[0]); err != nil {
+					return err
+				}
+				fmt.Printf("Removed exclusion %s\n", args[0])
+				return nil
+			})
+		},
+	}
+}
+
 func splitCSV(s string) []string {
 	if s == "" {
 		return nil

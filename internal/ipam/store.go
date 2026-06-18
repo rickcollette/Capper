@@ -73,6 +73,15 @@ func (s *Store) InitSchema() error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(ip_id, target_type, target_id, binding_mode, external_port, protocol)
 		)`,
+		`CREATE TABLE IF NOT EXISTS ipam_exclusions (
+			id TEXT PRIMARY KEY,
+			address TEXT NOT NULL,
+			pool_id TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			created_by TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			UNIQUE(address, pool_id)
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -222,6 +231,12 @@ func (s *Store) GetIP(id string) (RoutableIP, error) {
 	return scanIP(s.db.QueryRow(`SELECT `+ipCols+` FROM routable_ips WHERE id=?`, id))
 }
 
+// GetIPByAddress returns the materialized row for an address (addresses are
+// globally unique), or sql.ErrNoRows if it has not been materialized.
+func (s *Store) GetIPByAddress(address string) (RoutableIP, error) {
+	return scanIP(s.db.QueryRow(`SELECT `+ipCols+` FROM routable_ips WHERE address=?`, address))
+}
+
 // GetIPByName returns a named reserved address within a project.
 func (s *Store) GetIPByName(project, name string) (RoutableIP, error) {
 	return scanIP(s.db.QueryRow(`SELECT `+ipCols+` FROM routable_ips WHERE project=? AND name=?`, project, name))
@@ -325,5 +340,69 @@ func (s *Store) ListBindings(ipID string) ([]IPBinding, error) {
 // DeleteBindingsForIP removes all bindings for an address.
 func (s *Store) DeleteBindingsForIP(ipID string) error {
 	_, err := s.db.Exec(`DELETE FROM routable_ip_bindings WHERE ip_id=?`, ipID)
+	return err
+}
+
+// ---- exclusions ------------------------------------------------------------
+
+const exclusionCols = `id, address, pool_id, reason, created_by, created_at`
+
+// InsertExclusion stores an admin-managed address exclusion.
+func (s *Store) InsertExclusion(e IPExclusion) (IPExclusion, error) {
+	if e.ID == "" {
+		e.ID = "ipexcl_" + uuid.NewString()
+	}
+	if e.CreatedAt == "" {
+		e.CreatedAt = nowTS()
+	}
+	_, err := s.db.Exec(`INSERT INTO ipam_exclusions
+		(id, address, pool_id, reason, created_by, created_at) VALUES (?,?,?,?,?,?)`,
+		e.ID, e.Address, e.PoolID, e.Reason, e.CreatedBy, e.CreatedAt)
+	if err != nil {
+		return IPExclusion{}, err
+	}
+	return e, nil
+}
+
+func scanExclusion(row interface{ Scan(...any) error }) (IPExclusion, error) {
+	var e IPExclusion
+	err := row.Scan(&e.ID, &e.Address, &e.PoolID, &e.Reason, &e.CreatedBy, &e.CreatedAt)
+	return e, err
+}
+
+// GetExclusion returns an exclusion by ID.
+func (s *Store) GetExclusion(id string) (IPExclusion, error) {
+	return scanExclusion(s.db.QueryRow(`SELECT `+exclusionCols+` FROM ipam_exclusions WHERE id=?`, id))
+}
+
+// ListExclusions returns exclusions, optionally filtered to a pool. Global
+// exclusions (pool_id='') are always included.
+func (s *Store) ListExclusions(poolID string) ([]IPExclusion, error) {
+	q := `SELECT ` + exclusionCols + ` FROM ipam_exclusions`
+	var args []any
+	if poolID != "" {
+		q += ` WHERE pool_id='' OR pool_id=?`
+		args = append(args, poolID)
+	}
+	q += ` ORDER BY address`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IPExclusion
+	for rows.Next() {
+		e, err := scanExclusion(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// DeleteExclusion removes an exclusion by ID.
+func (s *Store) DeleteExclusion(id string) error {
+	_, err := s.db.Exec(`DELETE FROM ipam_exclusions WHERE id=?`, id)
 	return err
 }

@@ -3,6 +3,7 @@ package ipam
 import (
 	"database/sql"
 	"fmt"
+	"net/netip"
 )
 
 // Manager orchestrates pool creation, reservation, and binding while enforcing
@@ -25,9 +26,21 @@ type CreatePoolOptions struct {
 }
 
 // CreatePool stores a pool and materializes its usable addresses (excluding
-// network/broadcast/gateway and any excluded addresses).
+// network/broadcast/gateway, any caller-supplied excluded addresses, and any
+// admin-managed exclusions whose CIDR contains the address).
 func (m *Manager) CreatePool(opts CreatePoolOptions) (RoutableIPPool, int, error) {
-	addrs, err := ExpandCIDR(opts.Pool.CIDR, opts.Pool.Gateway, opts.Excluded, opts.MaxHosts)
+	// Fold standing admin exclusions (global ones, plus any already scoped to a
+	// pool of the same name) into the excluded set so a freshly materialized
+	// pool never hands out an address an operator has already unlisted.
+	excluded := append([]string(nil), opts.Excluded...)
+	if standing, err := m.store.ListExclusions(""); err == nil {
+		for _, e := range standing {
+			if e.PoolID == "" && CIDRContains(opts.Pool.CIDR, e.Address) {
+				excluded = append(excluded, e.Address)
+			}
+		}
+	}
+	addrs, err := ExpandCIDR(opts.Pool.CIDR, opts.Pool.Gateway, excluded, opts.MaxHosts)
 	if err != nil {
 		return RoutableIPPool{}, 0, err
 	}
@@ -187,4 +200,114 @@ func (m *Manager) Detach(ipID string) error {
 	ip.Status = IPReserved
 	ip.TargetType, ip.TargetID = "", ""
 	return m.store.UpdateIP(ip)
+}
+
+// ---- exclusions ------------------------------------------------------------
+
+// ListExclusions returns admin-managed exclusions, optionally scoped to a pool
+// (global exclusions are always included).
+func (m *Manager) ListExclusions(poolID string) ([]IPExclusion, error) {
+	return m.store.ListExclusions(poolID)
+}
+
+// AddExclusion records an admin exclusion and reconciles it against the
+// already-materialized address: an available address is flipped to "excluded"
+// so it is never auto-allocated. An address that is already claimed — reserved,
+// allocated, attached, or with live bindings — is refused, because excluding it
+// would silently pull an IP that a project or target depends on; it must be
+// released/detached first. An address that has not been materialized yet is
+// simply excluded going forward.
+func (m *Manager) AddExclusion(e IPExclusion) (IPExclusion, error) {
+	if _, err := netip.ParseAddr(e.Address); err != nil {
+		return IPExclusion{}, fmt.Errorf("ipam: invalid address %q", e.Address)
+	}
+	if e.PoolID != "" {
+		pool, err := m.store.GetPool(e.PoolID)
+		if err != nil {
+			return IPExclusion{}, fmt.Errorf("ipam: pool not found: %s", e.PoolID)
+		}
+		e.PoolID = pool.ID
+		if !CIDRContains(pool.CIDR, e.Address) {
+			return IPExclusion{}, fmt.Errorf("ipam: address %s is outside pool %q (%s)", e.Address, pool.Name, pool.CIDR)
+		}
+	}
+
+	ip, err := m.store.GetIPByAddress(e.Address)
+	switch {
+	case err == sql.ErrNoRows:
+		// Not materialized yet — exclude going forward only.
+		ip = RoutableIP{}
+	case err != nil:
+		return IPExclusion{}, err
+	case e.PoolID != "" && ip.PoolID != e.PoolID:
+		// A pool-scoped exclusion that doesn't match the address's pool only
+		// applies going forward; leave the materialized row alone.
+		ip = RoutableIP{}
+	case ip.Status == IPExcluded:
+		// Already excluded; the exclusion row is all we need.
+	case ip.Status != IPAvailable:
+		return IPExclusion{}, fmt.Errorf("ipam: address %s is %s; release it before excluding", e.Address, ip.Status)
+	}
+
+	saved, err := m.store.InsertExclusion(e)
+	if err != nil {
+		return IPExclusion{}, err
+	}
+	if ip.ID != "" && ip.Status == IPAvailable {
+		ip.Status = IPExcluded
+		ip.AllocationType = "system"
+		if uerr := m.store.UpdateIP(ip); uerr != nil {
+			return IPExclusion{}, uerr
+		}
+	}
+	return saved, nil
+}
+
+// RemoveExclusion deletes an exclusion and returns its address to the available
+// pool — unless another standing exclusion still covers that address.
+func (m *Manager) RemoveExclusion(id string) error {
+	e, err := m.store.GetExclusion(id)
+	if err != nil {
+		return err
+	}
+	if err := m.store.DeleteExclusion(id); err != nil {
+		return err
+	}
+	ip, err := m.store.GetIPByAddress(e.Address)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if ip.Status != IPExcluded {
+		return nil
+	}
+	if m.stillExcluded(ip) {
+		return nil
+	}
+	ip.Status = IPAvailable
+	ip.AllocationType = "auto"
+	if uerr := m.store.UpdateIP(ip); uerr != nil {
+		return uerr
+	}
+	// An address freeing up can revive an exhausted pool.
+	if pool, perr := m.store.GetPool(ip.PoolID); perr == nil && pool.Status == PoolExhausted {
+		_ = m.store.SetPoolStatus(pool.ID, PoolActive)
+	}
+	return nil
+}
+
+// stillExcluded reports whether any remaining exclusion covers the address.
+func (m *Manager) stillExcluded(ip RoutableIP) bool {
+	rest, err := m.store.ListExclusions(ip.PoolID)
+	if err != nil {
+		return false
+	}
+	for _, x := range rest {
+		if x.Address == ip.Address && (x.PoolID == "" || x.PoolID == ip.PoolID) {
+			return true
+		}
+	}
+	return false
 }

@@ -54,11 +54,13 @@ Run `capper <command> --help` for the same information at the terminal. Global p
 - [`governance`](#capper-governance) — manage governance policies
 - [`health`](#capper-health) — instance health check status
 - [`host`](#capper-host) — manage host inventory and run capability checks
+- [`host-storage`](#capper-host-storage) — manage host physical disks and capacity pools
 - [`iam`](#capper-iam) — manage IAM users, roles, policies, and audit log
 - [`igw`](#capper-igw) — manage internet gateways
 - [`ingress`](#capper-ingress) — manage ingress rules
 - [`inspect`](#capper-inspect) — inspect an image or instance
 - [`ip`](#capper-ip) — manage routable IP addresses
+- [`ip-exclusion`](#capper-ip-exclusion) — manage admin IP exclusions (unlist addresses)
 - [`ip-pool`](#capper-ip-pool) — manage routable IP pools
 - [`job`](#capper-job) — manage and run operational jobs
 - [`keygen`](#capper-keygen) — generate an Ed25519 signing key pair
@@ -961,7 +963,7 @@ capper compute instance-type list
 
 #### `capper compute instance-type seed`
 
-seed built-in instance types (cap-m*, cap-c*, cap-g*)
+seed built-in and standard instance types
 
 ```text
 capper compute instance-type seed
@@ -1750,6 +1752,57 @@ capper host register [flags]
 | `--no-gpu-detect` | — | skip automatic GPU detection |
 | `--role` | `[compute]` | host roles (comma-separated) |
 
+## `capper host-storage`
+
+manage host physical disks and capacity pools
+
+**Subcommands:** `disks` · `pool`
+
+### `capper host-storage disks`
+
+list discovered host disks and their allocation state
+
+```text
+capper host-storage disks
+```
+
+### `capper host-storage pool`
+
+manage storage pools
+
+**Subcommands:** `create` · `delete` · `list`
+
+#### `capper host-storage pool create`
+
+register a storage pool (directory over a mount, or an LVM volume group)
+
+```text
+capper host-storage pool create NAME [flags]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--backend` | `directory` | pool backend: directory \| lvm |
+| `--device` | — | directory backend: backing device path (for display) |
+| `--mountpoint` | — | directory backend: mounted path the pool draws from |
+| `--vg` | — | lvm backend: volume group name |
+
+#### `capper host-storage pool delete`
+
+delete an (empty) storage pool
+
+```text
+capper host-storage pool delete NAME
+```
+
+#### `capper host-storage pool list`
+
+list storage pools with capacity usage
+
+```text
+capper host-storage pool list
+```
+
 ## `capper iam`
 
 manage IAM users, roles, policies, and audit log
@@ -2196,6 +2249,45 @@ capper ip reserve NAME [flags]
 | `--pool` | — | pool name or ID (required) |
 | `--purpose` | — | purpose (load-balancer, egress, passthrough, …) |
 | `--reserved` | — | mark as a reserved (Elastic) IP |
+
+## `capper ip-exclusion`
+
+manage admin IP exclusions (unlist addresses)
+
+**Subcommands:** `add` · `list` · `remove`
+
+### `capper ip-exclusion add`
+
+unlist an address so it is never auto-allocated
+
+```text
+capper ip-exclusion add ADDRESS [flags]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--pool` | — | scope to a pool (default: global) |
+| `--reason` | — | why the address is excluded |
+
+### `capper ip-exclusion list`
+
+list IP exclusions
+
+```text
+capper ip-exclusion list [flags]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--pool` | — | filter to a pool (includes global) |
+
+### `capper ip-exclusion remove`
+
+re-list a previously excluded address
+
+```text
+capper ip-exclusion remove ID
+```
 
 ## `capper ip-pool`
 

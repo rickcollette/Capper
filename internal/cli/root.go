@@ -140,6 +140,8 @@ func NewRootCmd() *cobra.Command {
 		mcpCmd(opts),
 		ipPoolCmd(opts),
 		ipCmd(opts),
+		ipExclusionCmd(opts),
+		hostStorageCmd(opts),
 		volumeCmd(opts),
 		realmCmd(opts),
 		regionCmd(opts),

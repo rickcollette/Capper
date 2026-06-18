@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"capper/internal/adminconfig"
 	"capper/internal/cgroup"
 	"capper/internal/diskquota"
+	"capper/internal/hoststorage"
 	"capper/internal/loader"
 	"capper/internal/network"
 	"capper/internal/runtime"
@@ -43,6 +45,49 @@ type RunOptions struct {
 	Labels        map[string]string   // metadata labels attached to the instance at launch
 	Entrypoint    []string            // optional entrypoint override
 	Args          []string            // optional args override (used with Entrypoint)
+}
+
+// setupInstanceDisk provisions the instance's size-capped upper layer. When an
+// admin has configured a default storage pool, the disk is drawn from that pool
+// (a directory-backed image on the pool mount, or an LVM logical volume) so its
+// capacity is accounted against real host storage; otherwise it falls back to a
+// loop image under the instance directory. A pool that is full or unhealthy
+// fails the launch loudly rather than silently ignoring the limit.
+func (m InstanceManager) setupInstanceDisk(instID, instDir string, diskBytes int64) error {
+	if diskBytes <= 0 {
+		return diskquota.SetupOverlay(instDir, diskBytes)
+	}
+	poolID := ""
+	if m.Store.AdminConfig != nil {
+		if v, ok, _ := m.Store.AdminConfig.Get(adminconfig.KeyDefaultInstancePool); ok {
+			poolID = v
+		}
+	}
+	if poolID == "" {
+		return diskquota.SetupOverlay(instDir, diskBytes)
+	}
+	hs := hoststorage.NewManager(m.Store.HostStorage)
+	alloc, err := hs.Allocate(hoststorage.AllocateOptions{
+		PoolID: poolID, Owner: instID, Name: instID, SizeBytes: diskBytes,
+	})
+	if err != nil {
+		return fmt.Errorf("instance disk: %w", err)
+	}
+	if alloc.Device != "" {
+		// LVM-backed: the logical volume is already ext4 and sized; use it directly.
+		if err := diskquota.SetupOverlayDevice(instDir, alloc.Device); err != nil {
+			_ = hs.Release(alloc.ID)
+			return err
+		}
+		return nil
+	}
+	// Directory-backed: place the size-capped image inside the allocation dir.
+	backing := filepath.Join(alloc.Path, "disk.img")
+	if err := diskquota.SetupOverlayBacking(instDir, diskBytes, backing); err != nil {
+		_ = hs.Release(alloc.ID)
+		return err
+	}
+	return nil
 }
 
 func (m InstanceManager) Run(imageName string, resources types.ResourceOverrides, opts RunOptions) (*types.Instance, error) {
@@ -113,7 +158,7 @@ func (m InstanceManager) Run(imageName string, resources types.ResourceOverrides
 		effectiveResources = resources.Apply(effectiveResources)
 	}
 	loaded.Manifest.Resources = effectiveResources
-	if err := diskquota.SetupOverlay(instDir, effectiveResources.DiskBytes); err != nil {
+	if err := m.setupInstanceDisk(id, instDir, effectiveResources.DiskBytes); err != nil {
 		_ = os.RemoveAll(instDir)
 		return nil, err
 	}
@@ -302,6 +347,8 @@ func (m InstanceManager) Remove(ref string) error {
 	if err := os.RemoveAll(instDir); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	// Return any pool-backed disk capacity this instance drew.
+	_ = hoststorage.NewManager(m.Store.HostStorage).ReleaseByOwner(inst.ID)
 	// Best-effort cgroup cleanup: the cgroup should be empty by now since the
 	// instance is stopped, but Remove() will fail silently if it isn't.
 	if cgm := cgroup.Open(inst.ID); cgm != nil {

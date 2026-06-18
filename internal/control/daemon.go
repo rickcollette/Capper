@@ -9,6 +9,8 @@ import (
 	"capper/internal/capinit"
 	capperdns "capper/internal/dns"
 	"capper/internal/health"
+	hsprovider "capper/internal/hostsec/provider"
+	"capper/internal/hoststorage"
 	"capper/internal/manager"
 	"capper/internal/network"
 	"capper/internal/store"
@@ -122,6 +124,8 @@ func NewDaemon(st *store.Store, instMgr manager.InstanceManager, opts DaemonOpti
 		daemons: make(map[string]*capperdns.Daemon),
 	})
 	d.Reconcilers.Register(&staleBridgeReconciler{st: st})
+	d.Reconcilers.Register(&hostStorageReconciler{st: st})
+	d.Reconcilers.Register(&fail2banReconciler{st: st})
 	registerTopologyReconcilers(d, st)
 	return d
 }
@@ -380,6 +384,45 @@ func (r *staleBridgeReconciler) Reconcile(_ context.Context) error {
 		}
 	}
 	return network.RemoveStaleBridges(activeBridges)
+}
+
+// hostStorageReconciler refreshes each storage pool's capacity from its backend
+// and marks pools whose backing storage (mountpoint or volume group) has gone
+// missing as degraded, so the Admin UI reflects live host state.
+type hostStorageReconciler struct {
+	st *store.Store
+}
+
+func (r *hostStorageReconciler) Name() string { return "host-storage" }
+
+func (r *hostStorageReconciler) Reconcile(ctx context.Context) error {
+	return hoststorage.NewManager(r.st.HostStorage).Reconcile(ctx)
+}
+
+// fail2banReconciler re-applies the admin persistent blocklist so manually-added
+// bans survive fail2ban restarts. It uses the process-wide fail2ban worker, so
+// it shares the same exclusive serialized queue as the admin API.
+type fail2banReconciler struct {
+	st *store.Store
+}
+
+func (r *fail2banReconciler) Name() string { return "fail2ban-blocklist" }
+
+func (r *fail2banReconciler) Reconcile(ctx context.Context) error {
+	w := hsprovider.Fail2ban()
+	if !w.Available() {
+		return nil
+	}
+	entries, err := r.st.Fail2ban.ListBlocklist()
+	if err != nil || len(entries) == 0 {
+		return err
+	}
+	want := map[string][]string{}
+	for _, e := range entries {
+		want[e.Jail] = append(want[e.Jail], e.IP)
+	}
+	_, err = w.EnsureBans(ctx, want)
+	return err
 }
 
 // buildDNSHealthFilter returns a HealthFilter that returns false for any IP

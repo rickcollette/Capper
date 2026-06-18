@@ -14,11 +14,12 @@ outputs:
 
 > Generated from `internal/api` route registrations by `make docs-api`. Do not edit by hand.
 
-All routes are under `/api/v1` and require [authentication](overview.md) unless listed as public there. Responses use the [standard envelope](overview.md#response-envelope). This deployment registers **440** routes across **65** groups.
+All routes are under `/api/v1` and require [authentication](overview.md) unless listed as public there. Responses use the [standard envelope](overview.md#response-envelope). This deployment registers **470** routes across **66** groups.
 
 ## Groups
 
 - [`accounts`](#accounts) — 31 routes
+- [`admin`](#admin) — 30 routes
 - [`ai`](#ai) — 6 routes
 - [`alerts`](#alerts) — 7 routes
 - [`auth`](#auth) — 5 routes
@@ -119,6 +120,41 @@ All routes are under `/api/v1` and require [authentication](overview.md) unless 
 | `DELETE` | `/api/v1/accounts/{account}/iam/users/{id}` |
 | `GET` | `/api/v1/accounts/{account}/iam/users/{userId}` |
 | `PATCH` | `/api/v1/accounts/{account}/iam/users/{userId}` |
+
+## admin
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/api/v1/admin/disks` |
+| `GET` | `/api/v1/admin/fail2ban/allowlist` |
+| `PUT` | `/api/v1/admin/fail2ban/allowlist` |
+| `POST` | `/api/v1/admin/fail2ban/ban` |
+| `GET` | `/api/v1/admin/fail2ban/blocklist` |
+| `POST` | `/api/v1/admin/fail2ban/blocklist` |
+| `DELETE` | `/api/v1/admin/fail2ban/blocklist/{id}` |
+| `GET` | `/api/v1/admin/fail2ban/status` |
+| `POST` | `/api/v1/admin/fail2ban/unban` |
+| `GET` | `/api/v1/admin/hostsec/nodes` |
+| `GET` | `/api/v1/admin/ip-exclusions` |
+| `POST` | `/api/v1/admin/ip-exclusions` |
+| `DELETE` | `/api/v1/admin/ip-exclusions/{id}` |
+| `GET` | `/api/v1/admin/limits/host` |
+| `PUT` | `/api/v1/admin/limits/host` |
+| `DELETE` | `/api/v1/admin/storage-allocations/{id}` |
+| `GET` | `/api/v1/admin/storage-pools` |
+| `POST` | `/api/v1/admin/storage-pools` |
+| `DELETE` | `/api/v1/admin/storage-pools/{id}` |
+| `GET` | `/api/v1/admin/storage-pools/{id}/allocations` |
+| `POST` | `/api/v1/admin/storage-pools/{id}/allocations` |
+| `GET` | `/api/v1/admin/storage/settings` |
+| `PUT` | `/api/v1/admin/storage/settings` |
+| `GET` | `/api/v1/admin/ufw/defaults` |
+| `PUT` | `/api/v1/admin/ufw/defaults` |
+| `POST` | `/api/v1/admin/ufw/disable` |
+| `POST` | `/api/v1/admin/ufw/enable` |
+| `POST` | `/api/v1/admin/ufw/rules` |
+| `DELETE` | `/api/v1/admin/ufw/rules/{num}` |
+| `GET` | `/api/v1/admin/ufw/status` |
 
 ## ai
 

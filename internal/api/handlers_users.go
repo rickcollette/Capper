@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 
 	"capper/internal/iam"
 )
@@ -20,7 +21,10 @@ func (s *Server) userView(u iam.User) userView {
 	return userView{User: u, Roles: s.ctrl.Store.IAM.RolesForUser(u.ID)}
 }
 
-// GET /api/v1/users — list all users with status + roles (admin only).
+// GET /api/v1/users — list users with status + roles (admin only). An optional
+// ?role= filter restricts the result to users holding that role, which lets the
+// console split platform operators (?role=admin, shown under Admin) from
+// ordinary users (?role=member, shown under IAM).
 func (s *Server) handleListRBACUsers(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "iam:user:list", "iam:system"); err != nil {
 		writeForbidden(w, err)
@@ -31,9 +35,14 @@ func (s *Server) handleListRBACUsers(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, err)
 		return
 	}
+	roleFilter := r.URL.Query().Get("role")
 	views := make([]userView, 0, len(users))
 	for _, u := range users {
-		views = append(views, s.userView(u))
+		v := s.userView(u)
+		if roleFilter != "" && !slices.Contains(v.Roles, roleFilter) {
+			continue
+		}
+		views = append(views, v)
 	}
 	writeData(w, views, nil)
 }
