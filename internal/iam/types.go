@@ -40,9 +40,12 @@ type User struct {
 	// approval), or "disabled". Defaults to "active" for legacy/local users.
 	Status string `json:"status,omitempty"`
 	// Provider is the identity source: "local" (OS/CLI) or "google" (SSO).
-	Provider  string   `json:"provider,omitempty"`
-	Groups    []string `json:"groups,omitempty"`
-	CreatedAt string   `json:"createdAt"`
+	Provider string `json:"provider,omitempty"`
+	// MustChangePassword forces the user to set a new password before access
+	// (set for admin-provisioned/admin-reset local users).
+	MustChangePassword bool     `json:"mustChangePassword,omitempty"`
+	Groups             []string `json:"groups,omitempty"`
+	CreatedAt          string   `json:"createdAt"`
 }
 
 // User status values.

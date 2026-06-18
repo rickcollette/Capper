@@ -312,6 +312,39 @@ func (m *Manager) SetPassword(idOrName, plaintext string) error {
 	return m.store.SetPasswordHash(idOrName, string(hash))
 }
 
+// AdminSetPassword sets a user's password and forces them to change it on next
+// login (used when an admin creates or resets a local account).
+func (m *Manager) AdminSetPassword(idOrName, plaintext string) error {
+	if err := m.SetPassword(idOrName, plaintext); err != nil {
+		return err
+	}
+	return m.store.SetMustChangePassword(idOrName, true)
+}
+
+// SetOwnPassword changes a user's own password. The current password must match
+// when one is already set (a passwordless SSO user may set an initial one). The
+// forced-change flag is cleared on success.
+func (m *Manager) SetOwnPassword(idOrName, current, newPassword string) error {
+	if strings.TrimSpace(newPassword) == "" {
+		return fmt.Errorf("new password required")
+	}
+	hash, _ := m.store.GetPasswordHash(idOrName)
+	if hash != "" {
+		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(current)) != nil {
+			return ErrAccessDenied
+		}
+	}
+	if err := m.SetPassword(idOrName, newPassword); err != nil {
+		return err
+	}
+	return m.store.SetMustChangePassword(idOrName, false)
+}
+
+// SetOwnEmail updates a user's own email address.
+func (m *Manager) SetOwnEmail(idOrName, email string) error {
+	return m.store.SetEmail(idOrName, strings.ToLower(strings.TrimSpace(email)))
+}
+
 // CreateManagedUser creates an admin-provisioned user (no self-registration).
 // provider is "local" (password login) or "google" (SSO by email). The user is
 // created active; assign roles separately.
