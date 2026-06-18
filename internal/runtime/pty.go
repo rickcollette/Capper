@@ -76,7 +76,7 @@ func (r Runner) buildShellCmd(instanceID, rootfs, shell, netNS string, user type
 		if err != nil {
 			return nil, fmt.Errorf("%s runtime requested but not found", mode)
 		}
-		args := []string{"exec", "-t", instanceID, shell}
+		args := []string{"exec", "-t", instanceID, shell, "-l"}
 		return exec.Command(bin, args...), nil
 	}
 	if mode == ModeBwrap || mode == ModeAuto {
@@ -91,7 +91,7 @@ func (r Runner) buildShellCmd(instanceID, rootfs, shell, netNS string, user type
 	if os.Geteuid() != 0 {
 		return nil, fmt.Errorf("chroot exec requires elevated privileges on this system")
 	}
-	cmd := exec.Command(shell)
+	cmd := exec.Command(shell, "-l")
 	cmd.Dir = "/"
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Chroot: rootfs,
@@ -127,7 +127,8 @@ func buildBwrapShellCmd(bwrap, rootfs, shell, netNS string, user types.UserConfi
 		"--chdir", "/",
 	)
 	args = appendProcOverrides(args, instDir)
-	args = append(args, "--", shell)
+	// Login shell so /etc/profile (PATH, PS1) is sourced for the interactive session.
+	args = append(args, "--", shell, "-l")
 	// netNS entry is handled by StartShellPTY (setns before fork); bwrap sees
 	// the inherited netns and does not need --unshare-net or an nsenter wrapper.
 	return exec.Command(bwrap, args...)

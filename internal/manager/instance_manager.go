@@ -52,6 +52,21 @@ func (m InstanceManager) Run(imageName string, resources types.ResourceOverrides
 		return nil, err
 	}
 
+	// Universal metadata reachability: the metadata service (169.254.169.254) is
+	// routed to instances via a network gateway, so every instance needs a
+	// network. When the caller requests none, attach the "default" network if it
+	// exists, so a plain instance can still reach metadata (capinit, hostname).
+	if opts.Network == nil && m.Store.Networks != nil {
+		if n, nerr := m.Store.Networks.Get("default", project); nerr == nil && n.Bridge != "" {
+			opts.Network = &NetworkRunOpts{
+				NetworkID: n.ID,
+				Bridge:    n.Bridge,
+				Subnet:    n.Subnet,
+				Gateway:   n.Gateway,
+			}
+		}
+	}
+
 	loaded, cleanup, err := m.Loader.Load(imageName)
 	if err != nil {
 		return nil, err

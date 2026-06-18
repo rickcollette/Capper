@@ -36,4 +36,12 @@ rm -rf rootfs
 mkdir -p rootfs
 tar -xzf "downloads/${tarball}" -C rootfs
 
+# Baseline shell environment for interactive (login) shells: PATH and a prompt
+# of the form user@host:cwd# . Hostname is set per-instance by capinit on boot.
+mkdir -p rootfs/etc rootfs/sbin
+cat > rootfs/etc/profile <<'PROF'
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export PS1='\u@\h:\w# '
+PROF
+
 echo "Alpine rootfs ready at examples/alpine/rootfs (${tarball})"

@@ -120,6 +120,8 @@ if [ "${SKIP_IMAGE:-0}" = "1" ]; then
 elif [ -f examples/alpine/capper.json ]; then
   say "Building sample image alpine.cap"
   make bootstrap-alpine
+  # Guest boot agent: capinit runs on boot to apply metadata (hostname etc.).
+  install -m 0755 bin/capinit examples/alpine/rootfs/sbin/capinit
   CAPWORK="$OUT_DIR/capwork"
   rm -rf "$CAPWORK"; mkdir -p "$CAPWORK/store"
   ./bin/capper --store "$CAPWORK/store" create alpine examples/alpine/capper.json

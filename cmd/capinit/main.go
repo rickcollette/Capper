@@ -262,6 +262,9 @@ func applyHostname(meta map[string]any) {
 	if err := syscall.Sethostname([]byte(hostname)); err != nil {
 		fmt.Fprintf(os.Stderr, "capinit: sethostname %s: %v\n", hostname, err)
 	}
+	// Persist to /etc/hostname so a later interactive shell (a fresh namespace
+	// that reads the file rather than inheriting the live UTS hostname) agrees.
+	_ = os.WriteFile("/etc/hostname", []byte(hostname+"\n"), 0o644)
 }
 
 func writeHosts(meta, network map[string]any) {

@@ -2,10 +2,10 @@
   "name": "alpine",
   "version": "3.23.0",
   "rootfs": "./rootfs",
-  "entrypoint": ["/bin/sh"],
-  "args": ["-c", "echo hello from alpine && cat /etc/alpine-release && sleep 3600"],
+  "entrypoint": ["/sbin/capinit", "--", "/bin/sh"],
+  "args": ["-lc", "echo hello from alpine && cat /etc/alpine-release && exec sleep 3600"],
   "env": {
-    "PATH": "/sbin:/bin:/usr/sbin:/usr/bin"
+    "PATH": "/bin:/sbin:/usr/bin:/usr/sbin"
   },
   "workingDir": "/",
   "shell": "/bin/sh",
@@ -14,7 +14,7 @@
     "gid": 0
   },
   "network": {
-    "enabled": false
+    "enabled": true
   },
   "resources": {
     "memoryBytes": 134217728,
