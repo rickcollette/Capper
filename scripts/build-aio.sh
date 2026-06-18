@@ -112,6 +112,24 @@ fi
 install -m 0755 scripts/aio-install.sh "$STAGE/install.sh"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 
+# Sample image: build alpine.cap so a fresh node ships with at least one
+# launchable image. The .cap is backend-agnostic; built with the default
+# (sqlite) store in a throwaway dir, then staged into the bundle.
+if [ "${SKIP_IMAGE:-0}" = "1" ]; then
+  echo "SKIP_IMAGE=1 — not building the sample image"
+elif [ -f examples/alpine/capper.json ]; then
+  say "Building sample image alpine.cap"
+  make bootstrap-alpine
+  CAPWORK="$OUT_DIR/capwork"
+  rm -rf "$CAPWORK"; mkdir -p "$CAPWORK/store"
+  ./bin/capper --store "$CAPWORK/store" create alpine examples/alpine/capper.json
+  cp "$CAPWORK/store/images/alpine.cap" "$STAGE/alpine.cap"
+  rm -rf "$CAPWORK"
+  echo "staged sample image: $(du -h "$STAGE/alpine.cap" | cut -f1)"
+else
+  echo "warning: examples/alpine/capper.json not found — bundling without a sample image" >&2
+fi
+
 cat > "$STAGE/README.md" <<EOF
 # Capper All-In-One — $VERSION (Ubuntu 24.04, amd64)
 

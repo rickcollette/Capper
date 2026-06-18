@@ -57,7 +57,10 @@ install -d -m 0755 "$PREFIX/bin"
 for b in capper capper-agent capinit capdb-server; do
   [ -f "$LIB_ROOT/current/bin/$b" ] && ln -sfn "$LIB_ROOT/current/bin/$b" "$PREFIX/bin/$b"
 done
-[ -d "$LIB_ROOT/current/console" ] && ln -sfn "$LIB_ROOT/current/console" "$CONSOLE_LINK"
+if [ -d "$LIB_ROOT/current/console" ]; then
+  install -d -m 0755 "$(dirname "$CONSOLE_LINK")"
+  ln -sfn "$LIB_ROOT/current/console" "$CONSOLE_LINK"
+fi
 
 # Drop-in so the control plane serves the console (the base unit has no --console).
 if command -v systemctl >/dev/null 2>&1; then
