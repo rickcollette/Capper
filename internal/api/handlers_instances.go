@@ -119,6 +119,12 @@ func (s *Server) handlePatchInstance(w http.ResponseWriter, r *http.Request) {
 		if req.Resources.MemoryBytes > 0 {
 			inst.Resources.MemoryBytes = req.Resources.MemoryBytes
 		}
+		if req.Resources.DiskBytes > 0 {
+			inst.Resources.DiskBytes = req.Resources.DiskBytes
+		}
+		if req.Resources.CPUCount > 0 {
+			inst.Resources.CPUCount = req.Resources.CPUCount
+		}
 		if req.Resources.CPUTimeSecs > 0 {
 			inst.Resources.CPUTimeSecs = req.Resources.CPUTimeSecs
 		}
@@ -142,7 +148,7 @@ func (s *Server) handlePatchInstance(w http.ResponseWriter, r *http.Request) {
 	// Live-apply memory/pids to a running instance via its cgroup; cpu-time and
 	// file-size rlimits require a restart.
 	liveApplied := false
-	needsRestart := req.Resources != nil && (req.Resources.CPUTimeSecs > 0 || req.Resources.FileSizeBytes > 0)
+	needsRestart := req.Resources != nil && (req.Resources.CPUTimeSecs > 0 || req.Resources.FileSizeBytes > 0 || req.Resources.DiskBytes > 0)
 	if inst.Status == types.StatusRunning {
 		if cgm := cgroup.Open(inst.ID); cgm != nil {
 			_ = cgm.Apply(inst.Resources)
@@ -588,6 +594,10 @@ func (s *Server) resolveInstanceTypeResources(r *http.Request, image, typeName s
 	if it.DiskBytes > 0 {
 		overrides.Limits.DiskBytes = it.DiskBytes
 		overrides.DiskSet = true
+	}
+	if it.CPUCount > 0 {
+		overrides.Limits.CPUCount = int64(it.CPUCount)
+		overrides.CPUSet = true
 	}
 	return overrides, nil
 }

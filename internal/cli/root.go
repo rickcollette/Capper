@@ -414,6 +414,14 @@ func runCmd(opts *options) *cobra.Command {
 						resources.Limits.MaxProcesses = int64(it.PIDLimit)
 						resources.PidsSet = true
 					}
+					if it.DiskBytes > 0 {
+						resources.Limits.DiskBytes = it.DiskBytes
+						resources.DiskSet = true
+					}
+					if it.CPUCount > 0 {
+						resources.Limits.CPUCount = int64(it.CPUCount)
+						resources.CPUSet = true
+					}
 					// Image type policy check.
 					policyLd := loader.Loader{Paths: ctrl.Store.Paths}
 					if imagePath, _, resolveErr := policyLd.ResolveImage(args[0]); resolveErr == nil {

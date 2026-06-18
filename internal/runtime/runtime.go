@@ -460,12 +460,7 @@ func WriteProcOverrides(instDir string, resources types.ResourceLimits) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	cpuinfo := "processor\t: 0\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 85\n" +
-		"model name\t: Virtual CPU\nstepping\t: 0\ncpu MHz\t\t: 2000.000\ncache size\t: 4096 KB\n" +
-		"physical id\t: 0\nsiblings\t: 1\ncore id\t\t: 0\ncpu cores\t: 1\n" +
-		"flags\t\t: fpu sse sse2\nbogomips\t: 4000.00\n" +
-		"clflush size\t: 64\ncache_alignment\t: 64\n" +
-		"address sizes\t: 40 bits physical, 48 bits virtual\n\n"
+	cpuinfo := formatMaskedCPUInfo(resources.CPUCount)
 	if err := os.WriteFile(filepath.Join(dir, "cpuinfo"), []byte(cpuinfo), 0o644); err != nil {
 		return err
 	}
@@ -479,6 +474,25 @@ func WriteProcOverrides(instDir string, resources types.ResourceLimits) error {
 		"Buffers:               0 kB\nCached:                0 kB\nSwapTotal:             0 kB\nSwapFree:              0 kB\n",
 		memKB, freeKB, freeKB)
 	return os.WriteFile(filepath.Join(dir, "meminfo"), []byte(meminfo), 0o644)
+}
+
+// formatMaskedCPUInfo synthesizes a /proc/cpuinfo view with n virtual CPUs.
+func formatMaskedCPUInfo(n int64) string {
+	if n <= 0 {
+		n = 1
+	}
+	var b strings.Builder
+	block := "vendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 85\n" +
+		"model name\t: Virtual CPU\nstepping\t: 0\ncpu MHz\t\t: 2000.000\ncache size\t: 4096 KB\n" +
+		"physical id\t: 0\nsiblings\t: %d\ncore id\t\t: 0\ncpu cores\t: %d\n" +
+		"flags\t\t: fpu sse sse2\nbogomips\t: 4000.00\n" +
+		"clflush size\t: 64\ncache_alignment\t: 64\n" +
+		"address sizes\t: 40 bits physical, 48 bits virtual\n\n"
+	for i := int64(0); i < n; i++ {
+		fmt.Fprintf(&b, "processor\t: %d\n", i)
+		fmt.Fprintf(&b, block, n, n)
+	}
+	return b.String()
 }
 
 func rootfsHostname(rootfs string) string {
