@@ -1,51 +1,88 @@
 #!/bin/sh
-# Build a full-toolset Alpine rootfs for the sample image using apk.static, so
-# capsules get real GNU/util-linux tooling (bash, coreutils, procps, util-linux)
-# instead of busybox applets. procps' free(1) reads /proc/meminfo (which Capper
-# masks per-instance), so it reports the capsule's memory, not the host's.
+# Build a busybox-free Alpine rootfs for Capper capsules.
+# Installs full GNU/core/procps/util-linux tooling, then purges busybox entirely.
+# Requires docker on the build host (same pattern as examples/alma).
 set -eu
 
-arch="x86_64"
-base="https://dl-cdn.alpinelinux.org/alpine/latest-stable"
-pkgs="alpine-base bash coreutils procps-ng util-linux shadow findutils grep sed ca-certificates iproute2"
-
 cd "$(dirname "$0")"
-mkdir -p downloads
+img="${ALPINE_IMAGE:-alpine:3.20}"
 
-SUDO=""
-[ "$(id -u)" -ne 0 ] && SUDO="sudo"
-
-# Fetch the static apk-tools (lets us build a rootfs from any host, no chroot).
-apkpkg="$(curl -fsSL "$base/main/$arch/" \
-  | grep -oE 'apk-tools-static-[0-9._r-]+\.apk' | sort -V | tail -1)"
-[ -n "$apkpkg" ] || { echo "bootstrap: cannot find apk-tools-static" >&2; exit 1; }
-if [ ! -f "downloads/$apkpkg" ]; then
-  curl -fsSL "$base/main/$arch/$apkpkg" -o "downloads/$apkpkg"
+if ! command -v docker >/dev/null 2>&1; then
+  echo "alpine bootstrap: docker is required to build the Alpine rootfs" >&2
+  exit 1
 fi
-rm -rf apktools && mkdir apktools
-tar -xzf "downloads/$apkpkg" -C apktools 2>/dev/null
-apk="apktools/sbin/apk.static"
-[ -x "$apk" ] || { echo "bootstrap: apk.static not found in $apkpkg" >&2; exit 1; }
 
-# Clean build so a previous rootfs can't leak in.
-$SUDO rm -rf rootfs
-mkdir -p rootfs
-$SUDO "$apk" -X "$base/main" -X "$base/community" -U --allow-untrusted \
-  --root rootfs --initdb add $pkgs
+docker pull -q "$img" >/dev/null
+name="capper-alpine-build-$$"
+docker rm -f "$name" >/dev/null 2>&1 || true
 
-# Hand the tree back to the build user so the (non-root) packaging steps
-# (capinit copy, capper create) can read/modify it. apk leaves some setuid
-# binaries mode ---x--x--x; capper create must be able to read every file.
-$SUDO chown -R "$(id -u):$(id -g)" rootfs
-$SUDO chmod -R u+rwX rootfs
+docker run --name "$name" "$img" sh -c '
+  set -eu
+  apk add --no-cache \
+    bash coreutils procps-ng util-linux shadow findutils grep sed gawk tar gzip which less \
+    ca-certificates iproute2 alpine-release apk-tools
 
-# Baseline login-shell environment: PATH and a user@host:cwd# prompt. Hostname
-# is set per-instance by capinit on boot.
-mkdir -p rootfs/etc
-cat > rootfs/etc/profile <<'PROF'
-export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+  ln -sf bash /bin/sh
+
+  # Remove busybox binary and metadata.
+  rm -f /bin/busybox /usr/bin/busybox
+  rm -rf /etc/busybox-paths.d
+
+  # Drop symlinks that still point at busybox.
+  for link in $(find /bin /sbin /usr/bin /usr/sbin -type l 2>/dev/null); do
+    target=$(readlink "$link" 2>/dev/null || true)
+    case "$target" in *busybox*|busybox) rm -f "$link" ;; esac
+  done
+
+  # Restore /bin names for tools that live under /usr/bin after the purge.
+  for cmd in find sed awk grep gzip tar ps free top which less; do
+    if [ ! -e "/bin/$cmd" ]; then
+      if [ -x "/usr/bin/$cmd" ]; then
+        ln -sf "../usr/bin/$cmd" "/bin/$cmd"
+      elif [ -x "/bin/coreutils" ]; then
+        ln -sf coreutils "/bin/$cmd" 2>/dev/null || true
+      fi
+    fi
+  done
+
+  if find / -name "*busybox*" 2>/dev/null | grep -q .; then
+    echo "bootstrap: busybox artifacts remain:" >&2
+    find / -name "*busybox*" 2>/dev/null >&2
+    exit 1
+  fi
+
+  mkdir -p /etc/profile.d
+  cat > /etc/profile.d/capper-tools.sh <<EOF
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EOF
+  cat > /etc/profile <<EOF
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PS1='\u@\h:\w# '
-PROF
+EOF
+' >/dev/null
 
-rm -rf apktools
-echo "Alpine full-toolset rootfs ready at examples/alpine/rootfs ($(du -sh rootfs | cut -f1))"
+rm -rf rootfs && mkdir rootfs
+docker export "$name" | tar -x -C rootfs 2>/dev/null
+docker rm -f "$name" >/dev/null
+
+chmod -R u+rwX rootfs
+
+# apk DB still lists busybox packages from the transient install layer; scrub
+# those records so the shipped rootfs does not advertise busybox.
+if [ -f rootfs/lib/apk/db/installed ]; then
+  awk '
+    /^P:busybox/ { skip=1; next }
+    /^P:busybox-binsh/ { skip=1; next }
+    /^P:/ { skip=0 }
+    !skip { print }
+  ' rootfs/lib/apk/db/installed > rootfs/lib/apk/db/installed.tmp
+  mv rootfs/lib/apk/db/installed.tmp rootfs/lib/apk/db/installed
+fi
+
+if find rootfs -name "*busybox*" 2>/dev/null | grep -q .; then
+  echo "bootstrap: busybox still present in exported rootfs:" >&2
+  find rootfs -name "*busybox*" 2>/dev/null >&2
+  exit 1
+fi
+
+echo "Alpine busybox-free rootfs ready at examples/alpine/rootfs ($(du -sh rootfs | cut -f1))"

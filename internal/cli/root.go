@@ -4594,14 +4594,17 @@ func computeInstanceTypeCmd(opts *options) *cobra.Command {
 func computeInstanceTypeSeedCmd(opts *options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "seed",
-		Short: "seed built-in instance types (cap-m*, cap-c*, cap-g*)",
+		Short: "seed built-in and standard instance types",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withStore(opts, func(st *store.Store) error {
 				mgr := compute.NewManager(st.Compute)
 				if err := mgr.SeedBuiltinTypes(); err != nil {
 					return err
 				}
-				fmt.Println("built-in instance types seeded")
+				if err := mgr.SeedStandardTypes(); err != nil {
+					return err
+				}
+				fmt.Println("built-in and standard instance types seeded")
 				return nil
 			})
 		},

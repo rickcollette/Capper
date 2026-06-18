@@ -105,28 +105,28 @@ func dbEngineUserData(engine database.DBEngine) string {
 func dbEngineEntrypoint(engine database.DBEngine) ([]string, []string) {
 	switch engine {
 	case database.EnginePostgres:
-		return []string{"/bin/sh", "-c"}, []string{postgresStartScript()}
+		return []string{"/bin/bash", "-lc"}, []string{postgresStartScript()}
 	case database.EngineRedis:
-		return []string{"/bin/sh", "-c"}, []string{redisStartScript()}
+		return []string{"/bin/bash", "-lc"}, []string{redisStartScript()}
 	case database.EngineMariaDB:
-		return []string{"/bin/sh", "-c"}, []string{mariadbStartScript()}
+		return []string{"/bin/bash", "-lc"}, []string{mariadbStartScript()}
 	case database.EngineCapDB:
-		return []string{"/bin/sh", "-c"}, []string{capdbStartScript()}
+		return []string{"/bin/bash", "-lc"}, []string{capdbStartScript()}
 	default:
 		return nil, nil
 	}
 }
 
 func postgresUserData() string {
-	return `#!/bin/sh
+	return `#!/bin/bash
 set -e
-apk add --no-cache postgresql16
+apk add --no-cache --no-scripts postgresql16
 `
 }
 
 func postgresStartScript() string {
 	return `set -e
-apk add --no-cache postgresql16
+apk add --no-cache --no-scripts postgresql16
 mkdir -p /run/postgresql /var/lib/postgresql/data
 chown -R postgres:postgres /run/postgresql /var/lib/postgresql
 if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
@@ -147,15 +147,15 @@ exec tail -f /var/log/postgresql.log
 }
 
 func redisUserData() string {
-	return `#!/bin/sh
+	return `#!/bin/bash
 set -e
-apk add --no-cache redis
+apk add --no-cache --no-scripts redis
 `
 }
 
 func redisStartScript() string {
 	return `set -e
-apk add --no-cache redis
+apk add --no-cache --no-scripts redis
 mkdir -p /var/lib/redis
 echo "requirepass $CAPPER_DB_PASSWORD" >> /etc/redis.conf
 echo "bind 0.0.0.0" >> /etc/redis.conf
@@ -164,15 +164,15 @@ exec redis-server /etc/redis.conf --dir /var/lib/redis
 }
 
 func mariadbUserData() string {
-	return `#!/bin/sh
+	return `#!/bin/bash
 set -e
-apk add --no-cache mariadb mariadb-client
+apk add --no-cache --no-scripts mariadb mariadb-client
 `
 }
 
 func mariadbStartScript() string {
 	return "set -e\n" +
-		"apk add --no-cache mariadb mariadb-client\n" +
+		"apk add --no-cache --no-scripts mariadb mariadb-client\n" +
 		"mkdir -p /run/mysqld /var/lib/mysql\n" +
 		"chown -R mysql:mysql /run/mysqld /var/lib/mysql\n" +
 		"if [ ! -d /var/lib/mysql/mysql ]; then\n" +
@@ -190,7 +190,7 @@ func mariadbStartScript() string {
 }
 
 func capdbUserData() string {
-	return `#!/bin/sh
+	return `#!/bin/bash
 set -e
 mkdir -p /var/lib/capdb /etc/capdb
 `
@@ -204,6 +204,6 @@ if [ -x /usr/local/bin/capdb-server ]; then
   chmod 600 /etc/capdb/auth
   exec /usr/local/bin/capdb-server --listen 0.0.0.0:$CAPPER_DB_PORT --auth-file /etc/capdb/auth --db-root /var/lib/capdb
 fi
-apk add --no-cache postgresql16
+apk add --no-cache --no-scripts postgresql16
 ` + postgresStartScript()
 }
