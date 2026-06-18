@@ -1,11 +1,13 @@
 #!/bin/sh
 # Build an AlmaLinux rootfs for the sample image by exporting the official
 # container image with a full core OS toolset (no busybox — Alma never ships it).
+# Default almalinux:8 — baseline x86-64. Alma 9+ requires x86-64-v2 (SSE4.2, etc.)
+# and fails on older hosts with "Fatal glibc error: CPU does not support x86-64-v2".
 # Requires docker on the build host.
 set -eu
 
 cd "$(dirname "$0")"
-img="${ALMA_IMAGE:-almalinux:9}"
+img="${ALMA_IMAGE:-almalinux:8}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "alma bootstrap: docker is required to build the AlmaLinux rootfs" >&2
@@ -30,7 +32,22 @@ mkdir -p rootfs/etc/profile.d
 cat > rootfs/etc/profile.d/capper-tools.sh <<'EOF'
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EOF
-printf "export PS1='\\u@\\h:\\w# '\n" > rootfs/etc/profile.d/capper-prompt.sh
+cat > rootfs/etc/profile.d/capper-prompt.sh <<'EOF'
+# Capper login prompt: user@hostname:cwd#
+export PS1='\u@\h:\w# '
+EOF
+
+# Login shells source /etc/profile.d before /etc/bashrc; bashrc can reset PS1 for
+# the default prompt, so set Capper's prompt again after those defaults run.
+if ! grep -q 'Capper login prompt' rootfs/etc/bashrc 2>/dev/null; then
+  cat >> rootfs/etc/bashrc <<'EOF'
+
+# Capper login prompt: user@hostname:cwd#
+if [ -n "${PS1-}" ]; then
+  PS1='\u@\h:\w# '
+fi
+EOF
+fi
 
 if find rootfs -name "*busybox*" 2>/dev/null | grep -q .; then
   echo "alma bootstrap: unexpected busybox in rootfs:" >&2

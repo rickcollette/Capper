@@ -123,7 +123,7 @@ dist: build bootstrap-alpine
 	cp $(DIST_STORE)/images/alpine.cap $(DIST_DIR)/alpine.cap
 
 web:
-	cd $(CAPPERWEB_DIR) && npm run build
+	cd $(CAPPERWEB_DIR) && scripts/build.sh
 
 # ── Service management ────────────────────────────────────────────────────────
 

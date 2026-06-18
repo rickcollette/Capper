@@ -16,13 +16,13 @@
 /docs/dist/
 /docs/generated/
 
-# Local runtime working dir (make capper-run): live store, logs, pids, binaries.
-/capper-run/store/
-/capper-run/logs/
-/capper-run/run/
-/capper-run/lib/
-/capper-run/console/
-/capper-run/capper
+# Local runtime working dir (make capper-run): live store, logs, pids, binaries,
+# plus copied-in examples/docs/schemas. Ignore everything except the tracked
+# README and Go module files.
+/capper-run/*
+!/capper-run/README.md
+!/capper-run/go.mod
+!/capper-run/go.sum
 
 # Go test / coverage / profiling output.
 *.test

@@ -260,11 +260,9 @@ configure_sysctl() {
 build_web() {
   header "Web console (Node)"
   check_node
-  info "npm install…"
+  info "npm install + audit fix + build…"
   cd "$CAPPERWEB_DIR"
-  npm install --prefer-offline --no-audit 2>&1 | grep -E "(added|warn|error)" || true
-  info "npm run build…"
-  npm run build
+  scripts/build.sh
   cd "$REPO_ROOT"
   ok "CapperWeb built"
 }
