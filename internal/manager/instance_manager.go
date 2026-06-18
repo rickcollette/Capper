@@ -379,8 +379,10 @@ func (m InstanceManager) Exec(ref string, command []string) error {
 	return m.Runner.Exec(inst.ID, inst.RootFSPath, instNetNS(inst), command, inst.User)
 }
 
-// StartShellPTY opens an interactive shell with a PTY for WebSocket terminal sessions.
-func (m InstanceManager) StartShellPTY(ref string) (*exec.Cmd, *os.File, error) {
+// StartShellPTY opens an interactive shell with a PTY for WebSocket terminal
+// sessions. term is the connecting client's terminal type (empty => a sane
+// default is used so curses apps like top work).
+func (m InstanceManager) StartShellPTY(ref, term string) (*exec.Cmd, *os.File, error) {
 	inst, err := m.Store.ResolveInstance(ref)
 	if err != nil {
 		return nil, nil, fmt.Errorf("instance not found: %s", ref)
@@ -392,7 +394,7 @@ func (m InstanceManager) StartShellPTY(ref string) (*exec.Cmd, *os.File, error) 
 		return nil, nil, fmt.Errorf("instance is not running: %s", ref)
 	}
 	shell := runtime.PickShell(inst.RootFSPath, inst.Shell)
-	return m.Runner.StartShellPTY(inst.ID, inst.RootFSPath, shell, instNetNS(inst), inst.User)
+	return m.Runner.StartShellPTY(inst.ID, inst.RootFSPath, shell, instNetNS(inst), inst.User, term)
 }
 
 func startupError(instDir string) string {
@@ -502,13 +504,20 @@ func injectResolvConf(rootfs, dnsIP string) {
 // detachNetwork tears down the named netns and veth pair for an instance that
 // was attached to a network, and releases its IPAM lease.
 func (m InstanceManager) detachNetwork(inst *types.Instance) {
-	if inst.NetworkID == "" {
-		return
-	}
 	_ = network.TeardownInstanceNetNS(inst.ID)
 	hostVeth, _ := network.VethNames(inst.ID)
 	_ = network.DeleteVeth(hostVeth)
-	_ = network.ReleaseIP(m.Store.Networks, inst.NetworkID, inst.ID)
+	// Release every lease this instance holds — not just inst.NetworkID — so a
+	// stale or unset NetworkID can't leave an orphaned lease behind that would
+	// later block network deletion and IP reuse.
+	if leases, err := m.Store.Networks.LeasesForInstance(inst.ID); err == nil {
+		for _, l := range leases {
+			_ = network.ReleaseIP(m.Store.Networks, l.NetworkID, inst.ID)
+		}
+	}
+	if inst.NetworkID != "" {
+		_ = network.ReleaseIP(m.Store.Networks, inst.NetworkID, inst.ID)
+	}
 }
 
 func unique(values []string) []string {

@@ -182,7 +182,16 @@ func (s *Store) DeletePool(id string) error {
 	if attached > 0 {
 		return fmt.Errorf("ipam: pool has %d in-use addresses; release them first", attached)
 	}
+	// Cascade: drop bindings on this pool's addresses, the addresses, and any
+	// pool-scoped exclusions so nothing is left referencing the removed pool.
+	if _, err := s.db.Exec(`DELETE FROM routable_ip_bindings WHERE ip_id IN
+		(SELECT id FROM routable_ips WHERE pool_id=?)`, id); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`DELETE FROM routable_ips WHERE pool_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM ipam_exclusions WHERE pool_id=?`, id); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(`DELETE FROM routable_ip_pools WHERE id=?`, id)

@@ -121,7 +121,7 @@ func TestWriteProcOverrides(t *testing.T) {
 		t.Fatalf("WriteProcOverrides: %v", err)
 	}
 
-	cpuinfo, err := os.ReadFile(dir + "/proc-overrides/cpuinfo")
+	cpuinfo, err := os.ReadFile(dir + "/rootfs/proc/.capper/cpuinfo")
 	if err != nil {
 		t.Fatalf("cpuinfo not written: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestWriteProcOverrides(t *testing.T) {
 		t.Error("cpuinfo exposes more than 1 vCPU")
 	}
 
-	meminfo, err := os.ReadFile(dir + "/proc-overrides/meminfo")
+	meminfo, err := os.ReadFile(dir + "/rootfs/proc/.capper/meminfo")
 	if err != nil {
 		t.Fatalf("meminfo not written: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestWriteProcOverridesMultiCPU(t *testing.T) {
 	if err := WriteProcOverrides(dir, types.ResourceLimits{CPUCount: 4, MemoryBytes: 1024 * 1024 * 1024}); err != nil {
 		t.Fatalf("WriteProcOverrides: %v", err)
 	}
-	cpuinfo, err := os.ReadFile(dir + "/proc-overrides/cpuinfo")
+	cpuinfo, err := os.ReadFile(dir + "/rootfs/proc/.capper/cpuinfo")
 	if err != nil {
 		t.Fatalf("cpuinfo: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestWriteProcOverridesDefault(t *testing.T) {
 	if err := WriteProcOverrides(dir, types.ResourceLimits{}); err != nil {
 		t.Fatalf("WriteProcOverrides: %v", err)
 	}
-	meminfo, err := os.ReadFile(dir + "/proc-overrides/meminfo")
+	meminfo, err := os.ReadFile(dir + "/rootfs/proc/.capper/meminfo")
 	if err != nil {
 		t.Fatalf("meminfo not written: %v", err)
 	}
@@ -222,10 +222,14 @@ func TestBwrapShellCmdHasUnshareNet(t *testing.T) {
 	}
 	dir := t.TempDir()
 	_ = os.MkdirAll(dir+"/rootfs", 0o755)
-	cmd := buildBwrapShellCmd(bwrap, dir+"/rootfs", "/bin/sh", "", types.UserConfig{UID: 1000, GID: 1000})
+	cmd := buildBwrapShellCmd(bwrap, dir+"/rootfs", "/bin/sh", "", types.UserConfig{UID: 1000, GID: 1000}, "xterm-256color")
 	joined := strings.Join(cmd.Args, " ")
 	if !strings.Contains(joined, "--unshare-net") {
 		t.Errorf("bwrap shell cmd missing --unshare-net; args: %s", joined)
+	}
+	// TERM must be set so curses apps work inside the shell.
+	if !strings.Contains(joined, "--setenv TERM xterm-256color") {
+		t.Errorf("bwrap shell cmd missing TERM; args: %s", joined)
 	}
 }
 

@@ -389,9 +389,19 @@ func (r Runner) Connect(instanceID, rootfs, netNS string, shells []string, user 
 	return fmt.Errorf("no usable shell found inside instance rootfs")
 }
 
+// localTerm returns the connecting client's terminal type for forwarding into
+// the instance, falling back to a sane default so curses apps (top, less, vi)
+// don't abort with "TERM environment variable not set."
+func localTerm() string {
+	if t := os.Getenv("TERM"); t != "" {
+		return t
+	}
+	return defaultTerm
+}
+
 func connectOCI(runtime, containerID string, shells []string) error {
 	for _, shell := range shells {
-		cmd := exec.Command(runtime, "exec", "-t", containerID, shell)
+		cmd := exec.Command(runtime, "exec", "-t", "--env", "TERM="+localTerm(), containerID, shell)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -405,6 +415,7 @@ func connectOCI(runtime, containerID string, shells []string) error {
 func connectBwrap(bwrap, rootfs, netNS, shell string, user types.UserConfig) error {
 	instDir := filepath.Dir(rootfs)
 	args := []string{
+		"--setenv", "TERM", localTerm(),
 		"--unshare-user",
 		"--uid", strconv.Itoa(user.UID),
 		"--gid", strconv.Itoa(user.GID),
@@ -441,22 +452,47 @@ func connectBwrap(bwrap, rootfs, netNS, shell string, user types.UserConfig) err
 	return cmd.Run()
 }
 
-// appendProcOverrides adds --ro-bind flags for any per-instance /proc masks.
+// procOverridesDir is where masked /proc files are staged. They live inside the
+// instance's own rootfs overlay (under /proc, which bwrap remounts fresh, hiding
+// them from the guest) rather than alongside instDir on the host root. This way
+// `df` inside the instance reports the instance's own capped overlay for the
+// masked /proc files instead of leaking the host disk's size.
+func procOverridesDir(instDir string) string {
+	return filepath.Join(instDir, "rootfs", "proc", ".capper")
+}
+
+// appendProcOverrides adds --ro-bind flags for any per-instance /proc masks. It
+// prefers the in-overlay location (no host-disk-size leak in df) and falls back
+// to the legacy sibling location so instances created before the move stay
+// masked after an upgrade.
 func appendProcOverrides(args []string, instDir string) []string {
-	overridesDir := filepath.Join(instDir, "proc-overrides")
+	newDir := procOverridesDir(instDir)
+	legacyDir := filepath.Join(instDir, "proc-overrides")
 	for _, name := range []string{"cpuinfo", "meminfo"} {
-		src := filepath.Join(overridesDir, name)
-		if _, err := os.Stat(src); err == nil {
-			args = append(args, "--ro-bind", src, "/proc/"+name)
+		src := filepath.Join(newDir, name)
+		if _, err := os.Stat(src); err != nil {
+			if legacy := filepath.Join(legacyDir, name); fileExists(legacy) {
+				src = legacy
+			} else {
+				continue
+			}
 		}
+		args = append(args, "--ro-bind", src, "/proc/"+name)
 	}
 	return args
 }
 
-// WriteProcOverrides generates masked /proc files for the guest based on
-// its resource allocation and writes them to instDir/proc-overrides/.
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// WriteProcOverrides generates masked /proc files for the guest based on its
+// resource allocation and stages them inside the instance overlay. Must be
+// called after the rootfs overlay is mounted so the files land on the capped
+// overlay.
 func WriteProcOverrides(instDir string, resources types.ResourceLimits) error {
-	dir := filepath.Join(instDir, "proc-overrides")
+	dir := procOverridesDir(instDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

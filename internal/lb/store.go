@@ -158,6 +158,8 @@ func (s *Store) SetServiceAlias(id, alias string) error {
 }
 
 func (s *Store) Delete(nameOrID, project string) error {
+	// Resolve the LB id first so its backends can be cascaded after deletion.
+	lb, gerr := s.Get(nameOrID, project)
 	var res sql.Result
 	var err error
 	if project == "" {
@@ -172,6 +174,10 @@ func (s *Store) Delete(nameOrID, project string) error {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("lb %q not found", nameOrID)
+	}
+	// Cascade: remove this LB's backends so none are left orphaned.
+	if gerr == nil {
+		_, _ = s.db.Exec(`DELETE FROM lb_backends WHERE lb_id=?`, lb.ID)
 	}
 	return nil
 }

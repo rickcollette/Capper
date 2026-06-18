@@ -218,6 +218,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/v1/instances", s.handleListInstances)
 	s.mux.HandleFunc("POST /api/v1/instances", s.handleCreateInstance)
+	s.mux.HandleFunc("GET /api/v1/instance-disk-capacity", s.handleInstanceDiskCapacity)
 	s.mux.HandleFunc("GET /api/v1/instances/{id}", s.handleGetInstance)
 	s.mux.HandleFunc("PATCH /api/v1/instances/{id}", s.handlePatchInstance)
 	s.mux.HandleFunc("DELETE /api/v1/instances/{id}", s.handleDeleteInstance)
@@ -698,6 +699,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/admin/fail2ban/status", s.handleFail2banStatus)
 	s.mux.HandleFunc("POST /api/v1/admin/fail2ban/ban", s.handleFail2banBan)
 	s.mux.HandleFunc("POST /api/v1/admin/fail2ban/unban", s.handleFail2banUnban)
+	s.mux.HandleFunc("POST /api/v1/admin/fail2ban/unban-all", s.handleFail2banUnbanAll)
+	s.mux.HandleFunc("POST /api/v1/admin/fail2ban/flush", s.handleFail2banFlush)
+	s.mux.HandleFunc("POST /api/v1/admin/fail2ban/reload", s.handleFail2banReload)
 	s.mux.HandleFunc("GET /api/v1/admin/fail2ban/blocklist", s.handleFail2banBlocklist)
 	s.mux.HandleFunc("POST /api/v1/admin/fail2ban/blocklist", s.handleFail2banAddBlocklist)
 	s.mux.HandleFunc("DELETE /api/v1/admin/fail2ban/blocklist/{id}", s.handleFail2banRemoveBlocklist)

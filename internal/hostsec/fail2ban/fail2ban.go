@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	"capper/internal/hostsec"
@@ -44,47 +46,115 @@ func (w *Worker) Available() bool { return w.runner.Available() }
 
 // Jail summarizes one fail2ban jail.
 type Jail struct {
-	Name           string   `json:"name"`
-	CurrentlyBanned int     `json:"currentlyBanned"`
-	TotalBanned    int      `json:"totalBanned"`
-	CurrentlyFailed int     `json:"currentlyFailed"`
-	BannedIPs      []string `json:"bannedIps"`
+	Name            string   `json:"name"`
+	CurrentlyBanned int      `json:"currentlyBanned"`
+	TotalBanned     int      `json:"totalBanned"`
+	CurrentlyFailed int      `json:"currentlyFailed"`
+	TotalFailed     int      `json:"totalFailed"`
+	BannedIPs       []string `json:"bannedIps"`
+	// Runtime parameters (best-effort; -1 when unavailable).
+	BanTime  int `json:"banTime"`
+	FindTime int `json:"findTime"`
+	MaxRetry int `json:"maxRetry"`
+}
+
+// BannedIP is one banned address aggregated across all jails (system-wide view).
+type BannedIP struct {
+	IP    string   `json:"ip"`
+	Jails []string `json:"jails"`
 }
 
 // Status is the overall fail2ban status.
 type Status struct {
 	Available bool   `json:"available"`
-	Jails     []Jail `json:"jails"`
+	Running   bool   `json:"running"`
+	Version   string `json:"version,omitempty"`
+	// TotalBanned is the count of distinct banned IPs across all jails.
+	TotalBanned int        `json:"totalBanned"`
+	Jails       []Jail     `json:"jails"`
+	Banned      []BannedIP `json:"banned"`
 }
 
-// Status returns the overall status and per-jail detail.
+// Status returns the overall status, per-jail detail, and the system-wide list
+// of banned IPs aggregated across every jail.
 func (w *Worker) Status(ctx context.Context) (Status, error) {
 	if !w.Available() {
 		return Status{Available: false}, nil
 	}
+	st := Status{Available: true, Banned: []BannedIP{}, Jails: []Jail{}}
+	st.Running = w.ping(ctx)
+	st.Version = w.version(ctx)
+
 	out, err := w.runner.Run(ctx, "status")
 	if err != nil {
-		return Status{Available: true}, fmt.Errorf("fail2ban: status: %w (%s)", err, strings.TrimSpace(string(out)))
+		return st, fmt.Errorf("fail2ban: status: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	names := parseJailList(string(out))
-	st := Status{Available: true}
+
+	// Aggregate banned IPs across jails into a single system-wide view.
+	byIP := map[string][]string{}
+	var order []string
 	for _, name := range names {
 		j, jerr := w.JailStatus(ctx, name)
 		if jerr != nil {
-			j = Jail{Name: name}
+			j = Jail{Name: name, BannedIPs: []string{}}
 		}
 		st.Jails = append(st.Jails, j)
+		for _, ip := range j.BannedIPs {
+			if _, seen := byIP[ip]; !seen {
+				order = append(order, ip)
+			}
+			byIP[ip] = append(byIP[ip], name)
+		}
 	}
+	sort.Strings(order)
+	for _, ip := range order {
+		st.Banned = append(st.Banned, BannedIP{IP: ip, Jails: byIP[ip]})
+	}
+	st.TotalBanned = len(st.Banned)
 	return st, nil
 }
 
-// JailStatus returns detail for a single jail.
+// ping reports whether the fail2ban server responds.
+func (w *Worker) ping(ctx context.Context) bool {
+	out, err := w.runner.Run(ctx, "ping")
+	return err == nil && strings.Contains(strings.ToLower(string(out)), "pong")
+}
+
+// version returns the fail2ban server version, or "".
+func (w *Worker) version(ctx context.Context) string {
+	out, err := w.runner.Run(ctx, "version")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// JailStatus returns detail for a single jail, including its runtime ban
+// parameters (best-effort).
 func (w *Worker) JailStatus(ctx context.Context, jail string) (Jail, error) {
 	out, err := w.runner.Run(ctx, "status", jail)
 	if err != nil {
-		return Jail{Name: jail}, fmt.Errorf("fail2ban: status %s: %w (%s)", jail, err, strings.TrimSpace(string(out)))
+		return Jail{Name: jail, BannedIPs: []string{}}, fmt.Errorf("fail2ban: status %s: %w (%s)", jail, err, strings.TrimSpace(string(out)))
 	}
-	return parseJailStatus(jail, string(out)), nil
+	j := parseJailStatus(jail, string(out))
+	j.BanTime = w.getJailInt(ctx, jail, "bantime")
+	j.FindTime = w.getJailInt(ctx, jail, "findtime")
+	j.MaxRetry = w.getJailInt(ctx, jail, "maxretry")
+	return j, nil
+}
+
+// getJailInt reads an integer runtime parameter for a jail (e.g. bantime),
+// returning -1 when unavailable.
+func (w *Worker) getJailInt(ctx context.Context, jail, param string) int {
+	out, err := w.runner.Run(ctx, "get", jail, param)
+	if err != nil {
+		return -1
+	}
+	if n, perr := strconv.Atoi(strings.TrimSpace(string(out))); perr == nil {
+		return n
+	}
+	return -1
 }
 
 // Ban bans an IP in a jail.
@@ -109,6 +179,61 @@ func (w *Worker) Unban(ctx context.Context, jail, ip string) error {
 		return fmt.Errorf("fail2ban: unban %s in %s: %w (%s)", ip, jail, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// UnbanAll removes an IP ban across every jail (system-wide). It uses the native
+// `fail2ban-client unban <ip>` (fail2ban ≥ 0.10); if that is unsupported it falls
+// back to unbanning the IP from each jail individually.
+func (w *Worker) UnbanAll(ctx context.Context, ip string) error {
+	if ip == "" {
+		return fmt.Errorf("fail2ban: ip is required")
+	}
+	if out, err := w.runner.Run(ctx, "unban", ip); err == nil {
+		return nil
+	} else if !looksUnsupported(string(out)) {
+		return fmt.Errorf("fail2ban: unban %s: %w (%s)", ip, err, strings.TrimSpace(string(out)))
+	}
+	// Fallback: iterate jails.
+	st, err := w.Status(ctx)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, j := range st.Jails {
+		if err := w.Unban(ctx, j.Name, ip); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// FlushAll unbans every IP from every jail (`fail2ban-client unban --all`).
+func (w *Worker) FlushAll(ctx context.Context) error {
+	if out, err := w.runner.Run(ctx, "unban", "--all"); err != nil {
+		return fmt.Errorf("fail2ban: unban --all: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Reload reloads fail2ban configuration. When jail is non-empty only that jail
+// is reloaded.
+func (w *Worker) Reload(ctx context.Context, jail string) error {
+	args := []string{"reload"}
+	if jail != "" {
+		args = append(args, jail)
+	}
+	if out, err := w.runner.Run(ctx, args...); err != nil {
+		return fmt.Errorf("fail2ban: reload: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// looksUnsupported reports whether output indicates an unknown/invalid command
+// (so callers can fall back to an older code path).
+func looksUnsupported(out string) bool {
+	low := strings.ToLower(out)
+	return strings.Contains(low, "invalid command") || strings.Contains(low, "unknown command") ||
+		strings.Contains(low, "unexpected") || strings.Contains(low, "usage:")
 }
 
 // GetAllowlist returns the admin-managed ignoreip entries (excluding the always-on
@@ -213,14 +338,17 @@ func parseJailList(s string) []string {
 }
 
 // parseJailStatus extracts counts and banned IPs from `status <jail>` output.
+// BannedIPs is initialized non-nil so it marshals as [] rather than null.
 func parseJailStatus(jail, s string) Jail {
-	j := Jail{Name: jail}
+	j := Jail{Name: jail, BannedIPs: []string{}}
 	for _, line := range strings.Split(s, "\n") {
 		line = strings.TrimSpace(line)
 		low := strings.ToLower(line)
 		switch {
 		case strings.Contains(low, "currently failed:"):
 			j.CurrentlyFailed = lastInt(line)
+		case strings.Contains(low, "total failed:"):
+			j.TotalFailed = lastInt(line)
 		case strings.Contains(low, "currently banned:"):
 			j.CurrentlyBanned = lastInt(line)
 		case strings.Contains(low, "total banned:"):

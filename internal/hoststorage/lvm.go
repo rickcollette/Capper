@@ -3,6 +3,7 @@ package hoststorage
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -11,10 +12,16 @@ import (
 )
 
 // lvmExec runs an LVM/mkfs command. It is a package var so tests can stub it.
+// LVM_SUPPRESS_FD_WARNINGS silences the "File descriptor N leaked on vgs
+// invocation" notices LVM prints when the parent process holds open fds (the
+// control daemon holds many sockets); without it those notices pollute the
+// captured output.
 var lvmExec = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	return exec.CommandContext(cctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(cctx, name, args...)
+	cmd.Env = append(os.Environ(), "LVM_SUPPRESS_FD_WARNINGS=1")
+	return cmd.CombinedOutput()
 }
 
 // lvmMu serializes LVM mutations so concurrent allocations never race lvcreate.
@@ -32,7 +39,13 @@ func vgSizeBytes(ctx context.Context, vg string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("hoststorage: vgs %s: %w (%s)", vg, err, strings.TrimSpace(string(out)))
 	}
-	s := strings.TrimSpace(string(out))
+	// vg_size is a single integer; take the last whitespace-delimited token so any
+	// stray warning lines that still reach the output can't corrupt the value.
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("hoststorage: vgs %s returned no size", vg)
+	}
+	s := fields[len(fields)-1]
 	n, perr := strconv.ParseInt(s, 10, 64)
 	if perr != nil {
 		return 0, fmt.Errorf("hoststorage: parse vg_size %q: %w", s, perr)
@@ -45,7 +58,11 @@ func vgSizeBytes(ctx context.Context, vg string) (int64, error) {
 func lvCreate(ctx context.Context, vg, lv string, sizeBytes int64) (string, error) {
 	lvmMu.Lock()
 	defer lvmMu.Unlock()
-	out, err := lvmExec(ctx, "lvcreate", "-L", strconv.FormatInt(sizeBytes, 10)+"b", "-n", lv, vg)
+	// -y answers prompts (non-interactive exec has no tty), and -Wy auto-wipes any
+	// leftover filesystem signature on the reused extents — otherwise lvcreate
+	// prompts "Wipe it? [y/n]" and aborts.
+	out, err := lvmExec(ctx, "lvcreate", "-y", "-Wy",
+		"-L", strconv.FormatInt(sizeBytes, 10)+"b", "-n", lv, vg)
 	if err != nil {
 		return "", fmt.Errorf("hoststorage: lvcreate %s/%s: %w (%s)", vg, lv, err, strings.TrimSpace(string(out)))
 	}

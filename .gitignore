@@ -38,7 +38,7 @@ coverage.html
 /examples/alpine/rootfs/
 
 # Deploy secrets (Google OAuth client) — track the tooling, never the secret.
-DEPLOY_TO_baily/oauth2.env
+deploy/oauth2.env
 
 # apk.static workdir (alpine image build)
 /examples/alpine/apktools/

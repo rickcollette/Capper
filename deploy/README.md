@@ -1,4 +1,4 @@
-# DEPLOY_TO_baily
+# Deploy
 
 End-to-end deployment of the Capper All-In-One stack to **cloud.cappervm.com**.
 
@@ -20,8 +20,8 @@ existing cookie-based console works with no manual token step.
 Set up credentials before deploying:
 
 ```bash
-cp DEPLOY_TO_baily/oauth2.env.example DEPLOY_TO_baily/oauth2.env
-$EDITOR DEPLOY_TO_baily/oauth2.env        # paste Client ID + secret
+cp deploy/oauth2.env.example deploy/oauth2.env
+$EDITOR deploy/oauth2.env        # paste Client ID + secret
 ```
 
 `oauth2.env` is gitignored. The Google OAuth client (Web application) needs the
@@ -36,7 +36,7 @@ are provided, the deploy still runs but prints a warning and the site is OPEN.**
 From the repo root (or anywhere):
 
 ```bash
-DEPLOY_TO_baily/deploy.sh
+deploy/deploy.sh
 ```
 
 `deploy.sh` runs locally: it builds the bundle with `scripts/build-aio.sh`,

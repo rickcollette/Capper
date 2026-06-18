@@ -153,6 +153,31 @@ func (s *Store) ListVPCs(project string) ([]VPC, error) {
 }
 
 func (s *Store) DeleteVPC(nameOrID, project string) error {
+	// The child tables declare ON DELETE CASCADE, but SQLite foreign-key
+	// enforcement is not enabled on the shared connection, so cascade explicitly
+	// in dependency order to avoid orphaning subnets, routes, SGs, gateways, etc.
+	v, gerr := s.GetVPC(nameOrID, project)
+	if gerr == nil {
+		id := v.ID
+		stmts := []struct {
+			q    string
+			args []any
+		}{
+			{`DELETE FROM capvpc_routes WHERE route_table_id IN (SELECT id FROM capvpc_route_tables WHERE vpc_id=?)`, []any{id}},
+			{`DELETE FROM capvpc_subnet_rt_assoc WHERE subnet_id IN (SELECT id FROM capvpc_subnets WHERE vpc_id=?)`, []any{id}},
+			{`DELETE FROM capvpc_sg_rules WHERE security_group_id IN (SELECT id FROM capvpc_security_groups WHERE vpc_id=?)`, []any{id}},
+			{`DELETE FROM capvpc_route_tables WHERE vpc_id=?`, []any{id}},
+			{`DELETE FROM capvpc_security_groups WHERE vpc_id=?`, []any{id}},
+			{`DELETE FROM capvpc_nat_gateways WHERE vpc_id=?`, []any{id}},
+			{`DELETE FROM capvpc_internet_gateways WHERE vpc_id=?`, []any{id}},
+			{`DELETE FROM capvpc_subnets WHERE vpc_id=?`, []any{id}},
+		}
+		for _, st := range stmts {
+			if _, err := s.db.Exec(st.q, st.args...); err != nil {
+				return err
+			}
+		}
+	}
 	_, err := s.db.Exec(`DELETE FROM capvpc_vpcs WHERE (id=? OR name=?) AND project=?`, nameOrID, nameOrID, project)
 	return err
 }

@@ -16,10 +16,25 @@ import (
 	"github.com/vishvananda/netns"
 )
 
+// defaultTerm is the terminal type advertised to interactive shells when the
+// connecting client does not supply one. The web console (xterm.js) and modern
+// CLI terminals are xterm-256color; without TERM set, curses apps such as top,
+// less, and vi abort with "TERM environment variable not set."
+const defaultTerm = "xterm-256color"
+
+// shellTerm resolves the TERM value to use for an interactive session: an
+// explicit override wins, otherwise the default.
+func shellTerm(term string) string {
+	if term != "" {
+		return term
+	}
+	return defaultTerm
+}
+
 // StartShellPTY starts an interactive shell with a PTY attached.
 // Caller must close the returned file when done.
-func (r Runner) StartShellPTY(instanceID, rootfs, shell, netNS string, user types.UserConfig) (*exec.Cmd, *os.File, error) {
-	cmd, err := r.buildShellCmd(instanceID, rootfs, shell, netNS, user)
+func (r Runner) StartShellPTY(instanceID, rootfs, shell, netNS string, user types.UserConfig, term string) (*exec.Cmd, *os.File, error) {
+	cmd, err := r.buildShellCmd(instanceID, rootfs, shell, netNS, user, shellTerm(term))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -69,20 +84,20 @@ func (r Runner) StartShellPTY(instanceID, rootfs, shell, netNS string, user type
 	return cmd, f, nil
 }
 
-func (r Runner) buildShellCmd(instanceID, rootfs, shell, netNS string, user types.UserConfig) (*exec.Cmd, error) {
+func (r Runner) buildShellCmd(instanceID, rootfs, shell, netNS string, user types.UserConfig, term string) (*exec.Cmd, error) {
 	mode := r.mode()
 	if mode == ModeCrun || mode == ModeRunc {
 		bin, err := exec.LookPath(mode)
 		if err != nil {
 			return nil, fmt.Errorf("%s runtime requested but not found", mode)
 		}
-		args := []string{"exec", "-t", instanceID, shell, "-l"}
+		args := []string{"exec", "-t", "--env", "TERM=" + term, instanceID, shell, "-l"}
 		return exec.Command(bin, args...), nil
 	}
 	if mode == ModeBwrap || mode == ModeAuto {
 		bwrap, err := exec.LookPath("bwrap")
 		if err == nil {
-			return buildBwrapShellCmd(bwrap, rootfs, shell, netNS, user), nil
+			return buildBwrapShellCmd(bwrap, rootfs, shell, netNS, user, term), nil
 		}
 		if mode == ModeBwrap {
 			return nil, fmt.Errorf("bubblewrap runtime requested but bwrap was not found")
@@ -93,6 +108,8 @@ func (r Runner) buildShellCmd(instanceID, rootfs, shell, netNS string, user type
 	}
 	cmd := exec.Command(shell, "-l")
 	cmd.Dir = "/"
+	// Login shell sources /etc/profile for PATH/PS1; add TERM so curses apps work.
+	cmd.Env = []string{"TERM=" + term}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Chroot: rootfs,
 		Credential: &syscall.Credential{
@@ -103,9 +120,10 @@ func (r Runner) buildShellCmd(instanceID, rootfs, shell, netNS string, user type
 	return cmd, nil
 }
 
-func buildBwrapShellCmd(bwrap, rootfs, shell, netNS string, user types.UserConfig) *exec.Cmd {
+func buildBwrapShellCmd(bwrap, rootfs, shell, netNS string, user types.UserConfig, term string) *exec.Cmd {
 	instDir := filepath.Dir(rootfs)
 	args := []string{
+		"--setenv", "TERM", term,
 		"--unshare-user",
 		"--uid", strconv.Itoa(user.UID),
 		"--gid", strconv.Itoa(user.GID),

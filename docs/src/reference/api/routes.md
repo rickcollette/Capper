@@ -14,12 +14,12 @@ outputs:
 
 > Generated from `internal/api` route registrations by `make docs-api`. Do not edit by hand.
 
-All routes are under `/api/v1` and require [authentication](overview.md) unless listed as public there. Responses use the [standard envelope](overview.md#response-envelope). This deployment registers **470** routes across **66** groups.
+All routes are under `/api/v1` and require [authentication](overview.md) unless listed as public there. Responses use the [standard envelope](overview.md#response-envelope). This deployment registers **474** routes across **67** groups.
 
 ## Groups
 
 - [`accounts`](#accounts) — 31 routes
-- [`admin`](#admin) — 30 routes
+- [`admin`](#admin) — 33 routes
 - [`ai`](#ai) — 6 routes
 - [`alerts`](#alerts) — 7 routes
 - [`auth`](#auth) — 5 routes
@@ -48,6 +48,7 @@ All routes are under `/api/v1` and require [authentication](overview.md) unless 
 - [`iam`](#iam) — 16 routes
 - [`images`](#images) — 11 routes
 - [`ingress`](#ingress) — 3 routes
+- [`instance-disk-capacity`](#instance-disk-capacity) — 1 routes
 - [`instances`](#instances) — 17 routes
 - [`ip-pools`](#ip-pools) — 4 routes
 - [`ips`](#ips) — 6 routes
@@ -132,8 +133,11 @@ All routes are under `/api/v1` and require [authentication](overview.md) unless 
 | `GET` | `/api/v1/admin/fail2ban/blocklist` |
 | `POST` | `/api/v1/admin/fail2ban/blocklist` |
 | `DELETE` | `/api/v1/admin/fail2ban/blocklist/{id}` |
+| `POST` | `/api/v1/admin/fail2ban/flush` |
+| `POST` | `/api/v1/admin/fail2ban/reload` |
 | `GET` | `/api/v1/admin/fail2ban/status` |
 | `POST` | `/api/v1/admin/fail2ban/unban` |
+| `POST` | `/api/v1/admin/fail2ban/unban-all` |
 | `GET` | `/api/v1/admin/hostsec/nodes` |
 | `GET` | `/api/v1/admin/ip-exclusions` |
 | `POST` | `/api/v1/admin/ip-exclusions` |
@@ -462,6 +466,12 @@ All routes are under `/api/v1` and require [authentication](overview.md) unless 
 | `GET` | `/api/v1/ingress` |
 | `POST` | `/api/v1/ingress` |
 | `DELETE` | `/api/v1/ingress/{name}` |
+
+## instance-disk-capacity
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/api/v1/instance-disk-capacity` |
 
 ## instances
 

@@ -8,7 +8,7 @@
 # relative to itself). It builds locally, then drives the remote host over SSH
 # using the deploy key.
 #
-#   DEPLOY_TO_baily/deploy.sh
+#   deploy/deploy.sh
 #
 # ── What it does ──────────────────────────────────────────────────────────────
 #   1. Preflight: required local tools + SSH reachability.

@@ -59,6 +59,60 @@ func TestStatusParsing(t *testing.T) {
 	}
 }
 
+func TestStatusAggregatesBannedSystemWide(t *testing.T) {
+	// Two jails, each reporting one distinct banned IP -> a system-wide list.
+	r := hostsec.NewRunnerFunc("fail2ban-client", func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+		switch {
+		case len(args) == 1 && args[0] == "ping":
+			return []byte("Server replied: pong"), nil
+		case len(args) == 1 && args[0] == "status":
+			return []byte("`- Jail list:\tsshd, nginx"), nil
+		case len(args) == 2 && args[0] == "status" && args[1] == "sshd":
+			return []byte("`- Banned IP list:\t1.2.3.4"), nil
+		case len(args) == 2 && args[0] == "status" && args[1] == "nginx":
+			return []byte("`- Banned IP list:\t5.6.7.8"), nil
+		}
+		return []byte(""), nil
+	})
+	w := NewWithRunner(r)
+	st, err := w.Status(context.Background())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !st.Running {
+		t.Error("expected Running true from ping")
+	}
+	if st.TotalBanned != 2 || len(st.Banned) != 2 {
+		t.Fatalf("expected 2 system-wide banned IPs, got %d (%+v)", st.TotalBanned, st.Banned)
+	}
+	if st.Banned[0].IP != "1.2.3.4" || st.Banned[0].Jails[0] != "sshd" {
+		t.Fatalf("unexpected aggregation: %+v", st.Banned)
+	}
+}
+
+func TestUnbanAllFallsBackToPerJail(t *testing.T) {
+	var calls []string
+	r := hostsec.NewRunnerFunc("fail2ban-client", func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		// Native `unban <ip>` is reported as unsupported -> trigger fallback.
+		if len(args) == 2 && args[0] == "unban" {
+			return []byte("Invalid command"), context.DeadlineExceeded
+		}
+		if len(args) == 1 && args[0] == "status" {
+			return []byte("`- Jail list:\tsshd"), nil
+		}
+		return []byte(""), nil
+	})
+	w := NewWithRunner(r)
+	if err := w.UnbanAll(context.Background(), "9.9.9.9"); err != nil {
+		t.Fatalf("unban all: %v", err)
+	}
+	joined := strings.Join(calls, "|")
+	if !strings.Contains(joined, "unban 9.9.9.9") || !strings.Contains(joined, "set sshd unbanip 9.9.9.9") {
+		t.Fatalf("expected native attempt then per-jail fallback, got: %v", calls)
+	}
+}
+
 func TestBanUnbanInvokesClient(t *testing.T) {
 	var calls []string
 	w := fakeWorker(t, &calls)

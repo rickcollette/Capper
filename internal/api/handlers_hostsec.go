@@ -146,6 +146,79 @@ func (s *Server) handleFail2banUnban(w http.ResponseWriter, r *http.Request) {
 	writeData(w, map[string]any{"unbanned": req.IP, "jail": req.Jail}, nil)
 }
 
+// POST /api/v1/admin/fail2ban/unban-all   {ip}
+// Unbans an IP across every jail (system-wide).
+func (s *Server) handleFail2banUnbanAll(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "admin:hostsec:fail2ban:write", "admin:system"); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	if !s.hostsecRequireLocal(w, r) {
+		return
+	}
+	var req struct {
+		IP string `json:"ip"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	if req.IP == "" {
+		writeError(w, http.StatusBadRequest, "ip is required")
+		return
+	}
+	if err := provider.Fail2ban().UnbanAll(r.Context(), req.IP); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	// Drop any matching persistent-blocklist entries so the reconciler doesn't
+	// immediately re-ban it.
+	if blocked, _ := s.ctrl.Store.Fail2ban.ListBlocklist(); blocked != nil {
+		for _, e := range blocked {
+			if e.IP == req.IP {
+				_, _ = s.ctrl.Store.Fail2ban.RemoveBlocklist(e.ID)
+			}
+		}
+	}
+	writeData(w, map[string]any{"unbanned": req.IP, "scope": "all-jails"}, nil)
+}
+
+// POST /api/v1/admin/fail2ban/flush — unban every IP from every jail.
+func (s *Server) handleFail2banFlush(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "admin:hostsec:fail2ban:write", "admin:system"); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	if !s.hostsecRequireLocal(w, r) {
+		return
+	}
+	if err := provider.Fail2ban().FlushAll(r.Context()); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeData(w, map[string]any{"flushed": true}, nil)
+}
+
+// POST /api/v1/admin/fail2ban/reload   {jail?}
+func (s *Server) handleFail2banReload(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "admin:hostsec:fail2ban:write", "admin:system"); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	if !s.hostsecRequireLocal(w, r) {
+		return
+	}
+	var req struct {
+		Jail string `json:"jail"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := provider.Fail2ban().Reload(r.Context(), req.Jail); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeData(w, map[string]any{"reloaded": true}, nil)
+}
+
 // GET /api/v1/admin/fail2ban/blocklist — persistent (always-on) bans.
 func (s *Server) handleFail2banBlocklist(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "admin:hostsec:fail2ban:read", "admin:system"); err != nil {

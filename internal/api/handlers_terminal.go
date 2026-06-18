@@ -41,7 +41,9 @@ func (s *Server) handleInstanceTerminal(w http.ResponseWriter, r *http.Request) 
 	}
 	defer conn.Close()
 
-	cmd, ptyFile, err := s.ctrl.Instances.StartShellPTY(inst.Name)
+	// The client may advertise its terminal type via ?term=; otherwise the
+	// runtime falls back to a sane default (xterm-256color, what the web console is).
+	cmd, ptyFile, err := s.ctrl.Instances.StartShellPTY(inst.Name, r.URL.Query().Get("term"))
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("terminal start failed: "+err.Error()))
 		return

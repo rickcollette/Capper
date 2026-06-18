@@ -134,6 +134,24 @@ func TestStoreDeleteEmptyNetwork(t *testing.T) {
 	}
 }
 
+func TestStoreAllLeases(t *testing.T) {
+	s := NewStore(openTestDB(t))
+	a := testNetwork("net_all1111all1111a", "allnet1")
+	b := testNetwork("net_all2222all2222b", "allnet2")
+	s.Insert(a)
+	s.Insert(b)
+	_ = s.InsertLease(NetworkLease{NetworkID: a.ID, InstanceID: "inst_a", IP: "10.42.0.2"})
+	_ = s.InsertLease(NetworkLease{NetworkID: b.ID, InstanceID: "inst_b", IP: "10.43.0.2"})
+
+	all, err := s.AllLeases()
+	if err != nil {
+		t.Fatalf("all leases: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 leases across networks, got %d", len(all))
+	}
+}
+
 func TestStoreLeases(t *testing.T) {
 	s := NewStore(openTestDB(t))
 	n := testNetwork("net_aabb1122aabb1122", "leasenet")
