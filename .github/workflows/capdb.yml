@@ -77,15 +77,26 @@ jobs:
         # The wire parser handles untrusted frames; build the C with the address
         # and undefined-behavior sanitizers and run the C test suite under them.
         run: |
-          export CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+          # Disable the nonnull-attribute / returns-nonnull checks: GCC emits them
+          # as non-recoverable abort handlers (they ignore halt_on_error), and the
+          # bundled SQLite codegen tool `lemon` calls qsort(NULL, 0, ...) when given
+          # no -D defines — a benign no-op that would otherwise abort lemon before
+          # it writes parse.c/fts5parse.c and fail the whole build. Address-safety
+          # and the rest of the UB checks (the point of fuzzing the wire parser)
+          # stay fully active.
+          export CFLAGS="-fsanitize=address,undefined -fno-sanitize=nonnull-attribute,returns-nonnull-attribute -fsanitize-recover=undefined -fno-omit-frame-pointer -g"
           export LDFLAGS="-fsanitize=address,undefined"
           export ASAN_OPTIONS=detect_leaks=0
-          # During the build the only programs *run* are the host codegen tools
-          # (lemon, mkkeywordhash); the code under test is merely compiled. lemon
-          # calls qsort(NULL, 0, ...) when given no -D defines, which trips UBSan's
-          # nonnull check — benign for a generator. Don't halt on UB while running
-          # build tools; the test suite below keeps halt_on_error=1.
+          # Don't halt on (recoverable) UB while running the host codegen tools;
+          # the test suite below keeps halt_on_error=1 so real UB still fails CI.
+          # `make capdb` configures the build dir and builds the client lib +
+          # server + codegen. ctest, however, runs the *whole* suite (capsuite,
+          # capdb_nettest, threadtest_pool, store_test), so build every target
+          # ("all") here — otherwise those test binaries are missing and ctest
+          # reports "no such file"/"Not Run".
           UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=0 make capdb
+          UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=0 \
+            cmake --build build/capdb -j"$(nproc)"
           export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
           ctest --test-dir build/capdb --output-on-failure || \
             ctest --test-dir build/capdb -V
