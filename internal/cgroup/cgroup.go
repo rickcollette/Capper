@@ -35,12 +35,44 @@ func New(instanceID string) (*Manager, error) {
 	if !Available() {
 		return nil, nil
 	}
-	path := filepath.Join(root, capperGroup, instanceID)
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	group := filepath.Join(root, capperGroup)
+	if err := os.MkdirAll(group, 0o755); err != nil {
 		// Non-fatal: cgroup setup is optional.
 		return nil, nil
 	}
+	// Enable controllers for the per-instance leaves. Without this the child
+	// cgroup has no memory.max/pids.max files and limit writes silently no-op.
+	enableControllers(group)
+	path := filepath.Join(group, instanceID)
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return nil, nil
+	}
 	return &Manager{Path: path}, nil
+}
+
+// enableControllers turns on the controllers Capper limits (memory, pids, cpu)
+// in the group's subtree_control so child cgroups expose memory.max etc. Only
+// controllers actually delegated to the group (listed in cgroup.controllers) are
+// requested. Best-effort: requires root + cgroup-v2 delegation from the parent.
+func enableControllers(group string) {
+	avail, err := os.ReadFile(filepath.Join(group, "cgroup.controllers"))
+	if err != nil {
+		return
+	}
+	have := map[string]bool{}
+	for _, c := range strings.Fields(string(avail)) {
+		have[c] = true
+	}
+	var want []string
+	for _, c := range []string{"memory", "pids", "cpu"} {
+		if have[c] {
+			want = append(want, "+"+c)
+		}
+	}
+	if len(want) == 0 {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(group, "cgroup.subtree_control"), []byte(strings.Join(want, " ")), 0o644)
 }
 
 // Open returns a Manager for an existing cgroup directory.

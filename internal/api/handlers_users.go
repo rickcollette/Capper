@@ -92,7 +92,8 @@ func (s *Server) handleCreateRBACUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Password != "" {
-		if err := s.ctrl.Store.IAM.SetPassword(u.ID, req.Password); err != nil {
+		// Admin-set password must be changed by the user on first login.
+		if err := s.ctrl.Store.IAM.AdminSetPassword(u.ID, req.Password); err != nil {
 			writeInternal(w, err)
 			return
 		}
@@ -127,11 +128,64 @@ func (s *Server) handleSetUserPassword(w http.ResponseWriter, r *http.Request) {
 		writeNotFound(w, "user not found")
 		return
 	}
-	if err := s.ctrl.Store.IAM.SetPassword(u.ID, req.Password); err != nil {
+	// Admin-reset password must be changed by the user on next login.
+	if err := s.ctrl.Store.IAM.AdminSetPassword(u.ID, req.Password); err != nil {
 		writeInternal(w, err)
 		return
 	}
 	writeData(w, map[string]any{"ok": true}, nil)
+}
+
+// POST /api/v1/users/me/password — change the caller's own password. Requires
+// the current password when one is set (passwordless SSO users may set a first
+// one). Clears the forced-change flag.
+func (s *Server) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request) {
+	pt, pid := principalFromContext(r.Context())
+	if pt != iam.PrincipalUser || pid == "" {
+		writeForbidden(w, errInvalidRole)
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	if err := s.ctrl.Store.IAM.SetOwnPassword(pid, req.CurrentPassword, req.NewPassword); err != nil {
+		if err == iam.ErrAccessDenied {
+			writeError(w, http.StatusUnauthorized, "current password is incorrect")
+			return
+		}
+		writeBadRequest(w, err)
+		return
+	}
+	writeData(w, map[string]any{"ok": true}, nil)
+}
+
+// PATCH /api/v1/users/me — update the caller's own profile (email).
+func (s *Server) handleUpdateOwnProfile(w http.ResponseWriter, r *http.Request) {
+	pt, pid := principalFromContext(r.Context())
+	if pt != iam.PrincipalUser || pid == "" {
+		writeForbidden(w, errInvalidRole)
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	if req.Email != "" {
+		if err := s.ctrl.Store.IAM.SetOwnEmail(pid, req.Email); err != nil {
+			writeBadRequest(w, err)
+			return
+		}
+	}
+	u, _ := s.ctrl.Store.IAM.IAMStore().GetUser(pid)
+	writeData(w, s.userView(u), nil)
 }
 
 // POST /api/v1/users/{id}/approve — activate a pending user and assign a role

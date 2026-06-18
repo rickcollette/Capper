@@ -122,6 +122,7 @@ func InitSchema(db *sql.DB) error {
 		`ALTER TABLE iam_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
 		`ALTER TABLE iam_users ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'`,
 		`ALTER TABLE iam_users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE iam_users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil && !strings.Contains(err.Error(), "duplicate column") {
@@ -134,11 +135,13 @@ func InitSchema(db *sql.DB) error {
 // ---- users ------------------------------------------------------------------
 
 // userColumns is the canonical column list/scan order for full User rows.
-const userColumns = `id, name, email, local_user, status, provider, created_at`
+const userColumns = `id, name, email, local_user, status, provider, created_at, must_change_password`
 
 func scanUser(sc interface{ Scan(...any) error }) (User, error) {
 	var u User
-	err := sc.Scan(&u.ID, &u.Name, &u.Email, &u.LocalUser, &u.Status, &u.Provider, &u.CreatedAt)
+	var mustChange int
+	err := sc.Scan(&u.ID, &u.Name, &u.Email, &u.LocalUser, &u.Status, &u.Provider, &u.CreatedAt, &mustChange)
+	u.MustChangePassword = mustChange != 0
 	return u, err
 }
 
@@ -152,11 +155,37 @@ func (s *Store) InsertUser(u User) error {
 	if u.Provider == "" {
 		u.Provider = "local"
 	}
+	mustChange := 0
+	if u.MustChangePassword {
+		mustChange = 1
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO iam_users(id, name, email, local_user, status, provider, created_at) VALUES(?,?,?,?,?,?,?)`,
-		u.ID, u.Name, u.Email, u.LocalUser, u.Status, u.Provider, u.CreatedAt,
+		`INSERT INTO iam_users(id, name, email, local_user, status, provider, created_at, must_change_password) VALUES(?,?,?,?,?,?,?,?)`,
+		u.ID, u.Name, u.Email, u.LocalUser, u.Status, u.Provider, u.CreatedAt, mustChange,
 	)
 	return err
+}
+
+// SetMustChangePassword flags (or clears) the forced password-change requirement.
+func (s *Store) SetMustChangePassword(idOrName string, must bool) error {
+	v := 0
+	if must {
+		v = 1
+	}
+	_, err := s.db.Exec(`UPDATE iam_users SET must_change_password=? WHERE id=? OR name=?`, v, idOrName, idOrName)
+	return err
+}
+
+// SetEmail updates a user's email (self-service or admin).
+func (s *Store) SetEmail(idOrName, email string) error {
+	res, err := s.db.Exec(`UPDATE iam_users SET email=? WHERE id=? OR name=?`, email, idOrName, idOrName)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return notFound("user", idOrName, sql.ErrNoRows)
+	}
+	return nil
 }
 
 func (s *Store) GetUser(nameOrID string) (User, error) {

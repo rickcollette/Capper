@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"capper/internal/cgroup"
 	"capper/internal/manager"
 	"capper/internal/metadata"
 	"capper/internal/network"
@@ -22,28 +23,28 @@ import (
 )
 
 type createInstanceRequest struct {
-	Image            string            `json:"image"`
-	Name             string            `json:"name,omitempty"`
-	InstanceType     string            `json:"instanceType,omitempty"`
-	Network          string            `json:"network,omitempty"`
-	Labels           map[string]string `json:"labels,omitempty"`
-	Env              map[string]string `json:"env,omitempty"`
-	CapInitTemplate  string            `json:"capInitTemplate,omitempty"`
-	CapInitContent   string            `json:"capInitContent,omitempty"`
-	CapInitMetadata  map[string]any    `json:"capInitMetadata,omitempty"`
-	Volumes          []volumeAttach    `json:"volumes,omitempty"`
-	Placement        *placementRequest `json:"placement,omitempty"`
+	Image           string            `json:"image"`
+	Name            string            `json:"name,omitempty"`
+	InstanceType    string            `json:"instanceType,omitempty"`
+	Network         string            `json:"network,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	CapInitTemplate string            `json:"capInitTemplate,omitempty"`
+	CapInitContent  string            `json:"capInitContent,omitempty"`
+	CapInitMetadata map[string]any    `json:"capInitMetadata,omitempty"`
+	Volumes         []volumeAttach    `json:"volumes,omitempty"`
+	Placement       *placementRequest `json:"placement,omitempty"`
 }
 
 type placementRequest struct {
-	Region           string            `json:"region,omitempty"`
-	Zone             string            `json:"zone,omitempty"`
-	Node             string            `json:"node,omitempty"`
-	Strategy         string            `json:"strategy,omitempty"`
-	MinZones         int               `json:"minZones,omitempty"`
-	RequireLabel     map[string]string `json:"requireLabel,omitempty"`
-	AntiAffinity     map[string]string `json:"antiAffinity,omitempty"`
-	PlacementPolicy  string            `json:"placementPolicy,omitempty"`
+	Region          string            `json:"region,omitempty"`
+	Zone            string            `json:"zone,omitempty"`
+	Node            string            `json:"node,omitempty"`
+	Strategy        string            `json:"strategy,omitempty"`
+	MinZones        int               `json:"minZones,omitempty"`
+	RequireLabel    map[string]string `json:"requireLabel,omitempty"`
+	AntiAffinity    map[string]string `json:"antiAffinity,omitempty"`
+	PlacementPolicy string            `json:"placementPolicy,omitempty"`
 }
 
 type volumeAttach struct {
@@ -80,6 +81,72 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.ctrl.Instances.Refresh(inst)
 	writeData(w, inst, instanceCaps(s, r, inst.ID))
+}
+
+// PATCH /api/v1/instances/{id} — update mutable instance properties: resource
+// limits (memory/cpu/pids/file-size), restart policy, and labels. Memory and
+// pids limits are applied live to a running instance's cgroup; cpu-time and
+// file-size limits (rlimits) and other changes take effect on the next start.
+func (s *Server) handlePatchInstance(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.authorize(r, "instance:update", "instance/"+id); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	inst, err := s.ctrl.Store.ResolveInstance(id)
+	if err != nil {
+		writeNotFound(w, "instance not found")
+		return
+	}
+	var req struct {
+		Resources     *types.ResourceLimits `json:"resources"`
+		RestartPolicy *string               `json:"restartPolicy"`
+		Labels        map[string]string     `json:"labels"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	if req.Resources != nil {
+		if req.Resources.MemoryBytes > 0 {
+			inst.Resources.MemoryBytes = req.Resources.MemoryBytes
+		}
+		if req.Resources.CPUTimeSecs > 0 {
+			inst.Resources.CPUTimeSecs = req.Resources.CPUTimeSecs
+		}
+		if req.Resources.MaxProcesses > 0 {
+			inst.Resources.MaxProcesses = req.Resources.MaxProcesses
+		}
+		if req.Resources.FileSizeBytes > 0 {
+			inst.Resources.FileSizeBytes = req.Resources.FileSizeBytes
+		}
+	}
+	if req.RestartPolicy != nil {
+		inst.RestartPolicy = types.RestartPolicy(*req.RestartPolicy)
+	}
+	if req.Labels != nil {
+		inst.Labels = req.Labels
+	}
+	if err := s.ctrl.Store.UpdateInstance(*inst); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	// Live-apply memory/pids to a running instance via its cgroup; cpu-time and
+	// file-size rlimits require a restart.
+	liveApplied := false
+	needsRestart := req.Resources != nil && (req.Resources.CPUTimeSecs > 0 || req.Resources.FileSizeBytes > 0)
+	if inst.Status == types.StatusRunning {
+		if cgm := cgroup.Open(inst.ID); cgm != nil {
+			_ = cgm.Apply(inst.Resources)
+			liveApplied = true
+		}
+	}
+	s.recordEvent(r, "instance", inst.ID, "instance.updated", nil)
+	writeData(w, map[string]any{
+		"instance":     inst,
+		"liveApplied":  liveApplied,
+		"needsRestart": needsRestart,
+	}, instanceCaps(s, r, inst.ID))
 }
 
 func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {

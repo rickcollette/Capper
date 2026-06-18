@@ -216,6 +216,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/instances", s.handleListInstances)
 	s.mux.HandleFunc("POST /api/v1/instances", s.handleCreateInstance)
 	s.mux.HandleFunc("GET /api/v1/instances/{id}", s.handleGetInstance)
+	s.mux.HandleFunc("PATCH /api/v1/instances/{id}", s.handlePatchInstance)
 	s.mux.HandleFunc("DELETE /api/v1/instances/{id}", s.handleDeleteInstance)
 	s.mux.HandleFunc("POST /api/v1/instances/{id}/start", s.handleStartInstance)
 	s.mux.HandleFunc("POST /api/v1/instances/{id}/stop", s.handleStopInstance)
@@ -309,6 +310,8 @@ func (s *Server) routes() {
 	// RBAC user lifecycle: listing, self-identity, admin provisioning, roles.
 	s.mux.HandleFunc("GET /api/v1/users", s.handleListRBACUsers)
 	s.mux.HandleFunc("GET /api/v1/users/me", s.handleCurrentUser)
+	s.mux.HandleFunc("PATCH /api/v1/users/me", s.handleUpdateOwnProfile)
+	s.mux.HandleFunc("POST /api/v1/users/me/password", s.handleChangeOwnPassword)
 	s.mux.HandleFunc("POST /api/v1/users", s.handleCreateRBACUser)
 	s.mux.HandleFunc("POST /api/v1/users/{id}/password", s.handleSetUserPassword)
 	s.mux.HandleFunc("POST /api/v1/users/{id}/approve", s.handleApproveUser)
