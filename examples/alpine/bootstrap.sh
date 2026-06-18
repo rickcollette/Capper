@@ -34,8 +34,10 @@ $SUDO "$apk" -X "$base/main" -X "$base/community" -U --allow-untrusted \
   --root rootfs --initdb add $pkgs
 
 # Hand the tree back to the build user so the (non-root) packaging steps
-# (capinit copy, capper create) can read/modify it.
+# (capinit copy, capper create) can read/modify it. apk leaves some setuid
+# binaries mode ---x--x--x; capper create must be able to read every file.
 $SUDO chown -R "$(id -u):$(id -g)" rootfs
+$SUDO chmod -R u+rwX rootfs
 
 # Baseline login-shell environment: PATH and a user@host:cwd# prompt. Hostname
 # is set per-instance by capinit on boot.
