@@ -36,6 +36,14 @@ func (l *LocalAPI) Serve(ctx context.Context) error {
 	mux.HandleFunc("GET /services", l.handleServices)
 	mux.HandleFunc("GET /inventory", l.handleInventory)
 	mux.HandleFunc("POST /doctor", l.handleDoctor)
+	// Host security (this node's host OS): the agent owns fail2ban/UFW on the
+	// node it runs on, via the same exclusive workers used by the control daemon.
+	mux.HandleFunc("GET /hostsec/fail2ban/status", l.handleF2BStatus)
+	mux.HandleFunc("POST /hostsec/fail2ban/ban", l.handleF2BBan)
+	mux.HandleFunc("POST /hostsec/fail2ban/unban", l.handleF2BUnban)
+	mux.HandleFunc("GET /hostsec/ufw/status", l.handleUFWStatus)
+	mux.HandleFunc("POST /hostsec/ufw/rules", l.handleUFWAddRule)
+	mux.HandleFunc("DELETE /hostsec/ufw/rules/{num}", l.handleUFWDeleteRule)
 
 	srv := &http.Server{Handler: mux}
 	go func() {

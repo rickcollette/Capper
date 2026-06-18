@@ -44,6 +44,20 @@ type RoutableIP struct {
 	UpdatedAt      string `json:"updatedAt"`
 }
 
+// IPExclusion is an admin-managed entry that keeps an address out of the
+// allocatable set, so the app stack never auto-allocates it (e.g. an address
+// already in use by the Capper Server Host inside a small routable subnet).
+// PoolID is optional: empty means the exclusion is global (applies to every
+// pool whose CIDR contains the address).
+type IPExclusion struct {
+	ID        string `json:"id"`
+	Address   string `json:"address"`
+	PoolID    string `json:"poolId,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	CreatedBy string `json:"createdBy,omitempty"`
+	CreatedAt string `json:"createdAt"`
+}
+
 // IPBinding records an active attachment of an IP to a target.
 type IPBinding struct {
 	ID           string `json:"id"`
@@ -71,6 +85,7 @@ const (
 	IPBlocked     = "blocked"
 	IPRetired     = "retired"
 	IPSystem      = "system"
+	IPExcluded    = "excluded"
 )
 
 // Pool status values.

@@ -55,3 +55,30 @@ Attaching an address binds it to a target with a mode (`vip`, `snat`, `dnat`,
 two targets; multiple ports on one IP to the same target are allowed.
 
 In the Web UI: **Network → Routable IPs** (pools, reservations, and addresses).
+
+## Exclusions
+
+An admin can *unlist* a routable address so the app stack never auto-allocates
+it — for example, an address inside a routable subnet that is already in use by
+the Capper Server Host. Excluding an address removes it from the allocatable set
+and reconciles any already-materialized pool: an `available` address flips to
+`excluded`, and a freshly created pool that contains the address skips it. A
+global exclusion (no pool) applies to every pool whose CIDR contains the address;
+a pool-scoped exclusion applies only within that pool.
+
+An address that is already claimed (reserved, allocated, attached, or with live
+bindings) is *not* silently pulled — the exclusion is refused until the address
+is released or detached. Removing an exclusion returns the address to `available`.
+
+```bash
+capper ip-exclusion add 203.0.113.2 --reason "Capper Server Host"
+capper ip-exclusion add 203.0.113.6 --pool public-main --reason "gateway HA"
+capper ip-exclusion list
+capper ip-exclusion remove ipexcl_<id>
+```
+
+API (admin only): `GET/POST /api/v1/admin/ip-exclusions`,
+`DELETE /api/v1/admin/ip-exclusions/{id}`. SDK: `c.IPAM.{ListExclusions,AddExclusion,RemoveExclusion}`.
+
+In the Web UI: **Admin → IP Exclusions** (admin-only). The Admin section also
+surfaces **Routable IPs** and **Local Users** (platform operator accounts).

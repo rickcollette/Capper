@@ -671,6 +671,48 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/ips/{id}/attach", s.handleAttachIP)
 	s.mux.HandleFunc("POST /api/v1/ips/{id}/detach", s.handleDetachIP)
 
+	// Admin: routable-IP exclusions (unlist addresses from auto-allocation).
+	s.mux.HandleFunc("GET /api/v1/admin/ip-exclusions", s.handleListIPExclusions)
+	s.mux.HandleFunc("POST /api/v1/admin/ip-exclusions", s.handleCreateIPExclusion)
+	s.mux.HandleFunc("DELETE /api/v1/admin/ip-exclusions/{id}", s.handleDeleteIPExclusion)
+
+	// Admin: host-wide limits.
+	s.mux.HandleFunc("GET /api/v1/admin/limits/host", s.handleGetHostLimits)
+	s.mux.HandleFunc("PUT /api/v1/admin/limits/host", s.handleSetHostLimits)
+
+	// Admin: host storage (physical disks, capacity pools, allocations).
+	s.mux.HandleFunc("GET /api/v1/admin/disks", s.handleListDisks)
+	s.mux.HandleFunc("GET /api/v1/admin/storage-pools", s.handleListStoragePools)
+	s.mux.HandleFunc("POST /api/v1/admin/storage-pools", s.handleCreateStoragePool)
+	s.mux.HandleFunc("DELETE /api/v1/admin/storage-pools/{id}", s.handleDeleteStoragePool)
+	s.mux.HandleFunc("GET /api/v1/admin/storage-pools/{id}/allocations", s.handleListStorageAllocations)
+	s.mux.HandleFunc("POST /api/v1/admin/storage-pools/{id}/allocations", s.handleCreateStorageAllocation)
+	s.mux.HandleFunc("DELETE /api/v1/admin/storage-allocations/{id}", s.handleDeleteStorageAllocation)
+	s.mux.HandleFunc("GET /api/v1/admin/storage/settings", s.handleGetStorageSettings)
+	s.mux.HandleFunc("PUT /api/v1/admin/storage/settings", s.handleSetStorageSettings)
+
+	// Admin: host security — node targeting (AIO local node vs Enterprise agents).
+	s.mux.HandleFunc("GET /api/v1/admin/hostsec/nodes", s.handleHostsecNodes)
+
+	// Admin: host security — fail2ban (host OS).
+	s.mux.HandleFunc("GET /api/v1/admin/fail2ban/status", s.handleFail2banStatus)
+	s.mux.HandleFunc("POST /api/v1/admin/fail2ban/ban", s.handleFail2banBan)
+	s.mux.HandleFunc("POST /api/v1/admin/fail2ban/unban", s.handleFail2banUnban)
+	s.mux.HandleFunc("GET /api/v1/admin/fail2ban/blocklist", s.handleFail2banBlocklist)
+	s.mux.HandleFunc("POST /api/v1/admin/fail2ban/blocklist", s.handleFail2banAddBlocklist)
+	s.mux.HandleFunc("DELETE /api/v1/admin/fail2ban/blocklist/{id}", s.handleFail2banRemoveBlocklist)
+	s.mux.HandleFunc("GET /api/v1/admin/fail2ban/allowlist", s.handleFail2banGetAllowlist)
+	s.mux.HandleFunc("PUT /api/v1/admin/fail2ban/allowlist", s.handleFail2banSetAllowlist)
+
+	// Admin: host security — UFW firewall (host OS).
+	s.mux.HandleFunc("GET /api/v1/admin/ufw/status", s.handleUFWStatus)
+	s.mux.HandleFunc("POST /api/v1/admin/ufw/rules", s.handleUFWAddRule)
+	s.mux.HandleFunc("DELETE /api/v1/admin/ufw/rules/{num}", s.handleUFWDeleteRule)
+	s.mux.HandleFunc("GET /api/v1/admin/ufw/defaults", s.handleUFWGetDefaults)
+	s.mux.HandleFunc("PUT /api/v1/admin/ufw/defaults", s.handleUFWSetDefault)
+	s.mux.HandleFunc("POST /api/v1/admin/ufw/enable", s.handleUFWSetEnabled(true))
+	s.mux.HandleFunc("POST /api/v1/admin/ufw/disable", s.handleUFWSetEnabled(false))
+
 	// CSD shared volumes
 	s.mux.HandleFunc("GET /api/v1/csd/volumes", s.handleListCSDVolumes)
 	s.mux.HandleFunc("POST /api/v1/csd/volumes", s.handleCreateCSDVolume)

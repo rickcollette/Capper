@@ -208,3 +208,68 @@ func (s *Server) handleDetachIP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeData(w, map[string]any{"detached": r.PathValue("id")}, nil)
 }
+
+// ---- exclusions (admin only) -----------------------------------------------
+
+// GET /api/v1/admin/ip-exclusions — list admin-managed address exclusions.
+func (s *Server) handleListIPExclusions(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "admin:ipam:exclusion:list", "admin:system"); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	poolID := r.URL.Query().Get("pool")
+	if poolID != "" {
+		if pool, err := s.ipamStore().GetPool(poolID); err == nil {
+			poolID = pool.ID
+		}
+	}
+	excl, err := s.ipamManager().ListExclusions(poolID)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	writeData(w, excl, nil)
+}
+
+// POST /api/v1/admin/ip-exclusions — unlist an address so the app stack never
+// auto-allocates it (e.g. an address used by the Capper Server Host).
+func (s *Server) handleCreateIPExclusion(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "admin:ipam:exclusion:create", "admin:system"); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	var req ipam.IPExclusion
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	if req.Address == "" {
+		writeError(w, http.StatusBadRequest, "address is required")
+		return
+	}
+	if req.PoolID != "" {
+		if pool, err := s.ipamStore().GetPool(req.PoolID); err == nil {
+			req.PoolID = pool.ID
+		}
+	}
+	_, req.CreatedBy = principalFromContext(r.Context())
+	excl, err := s.ipamManager().AddExclusion(req)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeData(w, excl, nil)
+}
+
+// DELETE /api/v1/admin/ip-exclusions/{id} — re-list a previously excluded address.
+func (s *Server) handleDeleteIPExclusion(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "admin:ipam:exclusion:delete", "admin:system"); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	if err := s.ipamManager().RemoveExclusion(r.PathValue("id")); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	writeData(w, map[string]any{"deleted": r.PathValue("id")}, nil)
+}

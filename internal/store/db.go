@@ -49,6 +49,9 @@ import (
 	"capper/internal/functions"
 	"capper/internal/mcpserver"
 	"capper/internal/ipam"
+	"capper/internal/adminconfig"
+	"capper/internal/hoststorage"
+	"capper/internal/hostsec/fail2ban"
 )
 
 type Store struct {
@@ -95,6 +98,9 @@ type Store struct {
 	Functions   *functions.Store
 	MCPServers  *mcpserver.Store
 	IPAM        *ipam.Store
+	AdminConfig *adminconfig.Store
+	HostStorage *hoststorage.Store
+	Fail2ban    *fail2ban.Store
 }
 
 func Open(paths Paths) (*Store, error) {
@@ -211,6 +217,9 @@ func Open(paths Paths) (*Store, error) {
 	s.Functions = functions.NewStore(db)
 	s.MCPServers = mcpserver.NewStore(db)
 	s.IPAM = ipam.NewStore(db)
+	s.AdminConfig = adminconfig.NewStore(db)
+	s.HostStorage = hoststorage.NewStore(db)
+	s.Fail2ban = fail2ban.NewStore(db)
 	return s, nil
 }
 
@@ -349,6 +358,15 @@ func (s *Store) init() error {
 		return err
 	}
 	if err := ipam.NewStore(s.DB).InitSchema(); err != nil {
+		return err
+	}
+	if err := adminconfig.NewStore(s.DB).InitSchema(); err != nil {
+		return err
+	}
+	if err := hoststorage.NewStore(s.DB).InitSchema(); err != nil {
+		return err
+	}
+	if err := fail2ban.NewStore(s.DB).InitSchema(); err != nil {
 		return err
 	}
 	stmts := []string{

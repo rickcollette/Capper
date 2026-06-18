@@ -8,10 +8,23 @@ import (
 )
 
 // SetupOverlay replaces instDir/rootfs with an overlay whose upper layer is a
-// size-capped ext4 loop device. When diskBytes <= 0 the extracted rootfs is
-// left unchanged. Requires root for mount/mkfs; failures are returned to the
-// caller so launches fail loudly instead of silently skipping the limit.
+// size-capped ext4 loop device backed by instDir/disk.img. When diskBytes <= 0
+// the extracted rootfs is left unchanged. Requires root for mount/mkfs; failures
+// are returned to the caller so launches fail loudly instead of silently
+// skipping the limit.
 func SetupOverlay(instDir string, diskBytes int64) error {
+	if diskBytes <= 0 {
+		return nil
+	}
+	return SetupOverlayBacking(instDir, diskBytes, "")
+}
+
+// SetupOverlayBacking is SetupOverlay with the size-capped disk image placed at
+// backingFile instead of instDir/disk.img. This lets the instance's upper layer
+// be drawn from a host storage pool (the backing file lives on the pool mount)
+// while the overlay mounts stay under instDir. An empty backingFile uses the
+// default instDir/disk.img location.
+func SetupOverlayBacking(instDir string, diskBytes int64, backingFile string) error {
 	if diskBytes <= 0 {
 		return nil
 	}
@@ -20,13 +33,21 @@ func SetupOverlay(instDir string, diskBytes int64) error {
 	if err := os.Rename(rootfs, lower); err != nil {
 		return fmt.Errorf("diskquota: rename rootfs: %w", err)
 	}
-	diskImg := filepath.Join(instDir, "disk.img")
+	diskImg := backingFile
+	if diskImg == "" {
+		diskImg = filepath.Join(instDir, "disk.img")
+	}
 	cow := filepath.Join(instDir, "cow")
 	upper := filepath.Join(cow, "upper")
 	work := filepath.Join(cow, "work")
 	for _, p := range []string{cow, rootfs} {
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			return fmt.Errorf("diskquota: mkdir %s: %w", p, err)
+		}
+	}
+	if dir := filepath.Dir(diskImg); dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("diskquota: mkdir backing dir %s: %w", dir, err)
 		}
 	}
 	f, err := os.OpenFile(diskImg, os.O_CREATE|os.O_RDWR, 0o600)
@@ -43,6 +64,43 @@ func SetupOverlay(instDir string, diskBytes int64) error {
 	}
 	if err := run("mount", "-o", "loop", diskImg, cow); err != nil {
 		return fmt.Errorf("diskquota: mount cow: %w", err)
+	}
+	for _, p := range []string{upper, work} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			_ = run("umount", cow)
+			return fmt.Errorf("diskquota: mkdir %s: %w", p, err)
+		}
+	}
+	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lower, upper, work)
+	if err := run("mount", "-t", "overlay", "overlay", "-o", opts, rootfs); err != nil {
+		_ = run("umount", cow)
+		return fmt.Errorf("diskquota: mount overlay: %w", err)
+	}
+	return nil
+}
+
+// SetupOverlayDevice is like SetupOverlayBacking but uses an existing block
+// device (e.g. an LVM logical volume from a storage pool) as the upper layer
+// instead of a loop-backed image. The device must already be ext4-formatted.
+func SetupOverlayDevice(instDir, device string) error {
+	if device == "" {
+		return fmt.Errorf("diskquota: device is required")
+	}
+	rootfs := filepath.Join(instDir, "rootfs")
+	lower := filepath.Join(instDir, "lower")
+	if err := os.Rename(rootfs, lower); err != nil {
+		return fmt.Errorf("diskquota: rename rootfs: %w", err)
+	}
+	cow := filepath.Join(instDir, "cow")
+	upper := filepath.Join(cow, "upper")
+	work := filepath.Join(cow, "work")
+	for _, p := range []string{cow, rootfs} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			return fmt.Errorf("diskquota: mkdir %s: %w", p, err)
+		}
+	}
+	if err := run("mount", device, cow); err != nil {
+		return fmt.Errorf("diskquota: mount device %s: %w", device, err)
 	}
 	for _, p := range []string{upper, work} {
 		if err := os.MkdirAll(p, 0o755); err != nil {

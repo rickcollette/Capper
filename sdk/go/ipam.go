@@ -68,3 +68,36 @@ func (a *IPAMAPI) ListIPs(ctx context.Context) ([]RoutableIP, error) {
 func (a *IPAMAPI) Release(ctx context.Context, ipID string) error {
 	return a.c.post(ctx, "ips/"+ipID+"/release", nil, nil)
 }
+
+// IPExclusion is an admin-managed address kept out of auto-allocation.
+type IPExclusion struct {
+	ID        string `json:"id"`
+	Address   string `json:"address"`
+	PoolID    string `json:"poolId,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	CreatedBy string `json:"createdBy,omitempty"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// ListExclusions returns admin-managed IP exclusions (admin only).
+func (a *IPAMAPI) ListExclusions(ctx context.Context) ([]IPExclusion, error) {
+	var out struct {
+		Data []IPExclusion `json:"data"`
+	}
+	return out.Data, a.c.get(ctx, "admin/ip-exclusions", &out)
+}
+
+// AddExclusion unlists an address so the app stack never auto-allocates it.
+// pool may be empty for a global exclusion.
+func (a *IPAMAPI) AddExclusion(ctx context.Context, address, pool, reason string) (IPExclusion, error) {
+	body := map[string]any{"address": address, "poolId": pool, "reason": reason}
+	var out struct {
+		Data IPExclusion `json:"data"`
+	}
+	return out.Data, a.c.post(ctx, "admin/ip-exclusions", body, &out)
+}
+
+// RemoveExclusion deletes an exclusion, re-listing its address.
+func (a *IPAMAPI) RemoveExclusion(ctx context.Context, id string) error {
+	return a.c.del(ctx, "admin/ip-exclusions/"+id)
+}
