@@ -634,7 +634,11 @@ func writeStartupError(instDir string, err error) {
 
 func applyResourceLimits(limits types.ResourceLimits, enforcePids bool) error {
 	if limits.MemoryBytes > 0 {
-		if err := setLimit(unix.RLIMIT_AS, uint64(limits.MemoryBytes)); err != nil {
+		// Limit the writable data segment, not the virtual address space. RLIMIT_AS
+		// caps virtual memory, which crashes runtimes (Go, JVM, …) that reserve a
+		// large PROT_NONE arena up front ("failed to reserve page summary memory").
+		// RLIMIT_DATA bounds actual heap/anonymous growth without that breakage.
+		if err := setLimit(unix.RLIMIT_DATA, uint64(limits.MemoryBytes)); err != nil {
 			return fmt.Errorf("set memory limit: %w", err)
 		}
 	}

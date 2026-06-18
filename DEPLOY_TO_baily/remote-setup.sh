@@ -211,17 +211,26 @@ for i in $(seq 1 15); do
   sleep 1
 done
 
+# Default network so every instance can reach the metadata service
+# (169.254.169.254) for capinit (hostname, etc.). Instances with no explicit
+# network auto-attach to it.
+if curl -fsS "${AUTH[@]}" "$base/networks" 2>/dev/null | grep -q '"name":"default"'; then
+  ok "default network present"
+else
+  say "Creating default network"
+  curl -fsS "${AUTH[@]}" -X POST "$base/networks" \
+    -d '{"name":"default","subnet":"10.88.0.0/24","mode":"nat"}' >/dev/null \
+    && ok "default network created" || die "default network create failed"
+fi
+
 # Seed a sample image so the node ships with at least one launchable .cap.
 CAP_SRC="$REMOTE_TMP/$PKG/alpine.cap"
 if [ -f "$CAP_SRC" ]; then
-  if curl -fsS "${AUTH[@]}" "$base/images" 2>/dev/null | grep -q '"alpine'; then
-    ok "sample image already present"
-  else
-    say "Uploading sample image (alpine.cap)"
-    curl -fsS -H "Authorization: Bearer ${CAPPER_BEARER}" \
-      -F file=@"$CAP_SRC" -F name=alpine "$base/images/upload" >/dev/null \
-      && ok "alpine image registered" || die "image upload failed"
-  fi
+  # Always (re)upload so image updates (e.g. capinit, profile) ship; upsert by name.
+  say "Uploading sample image (alpine.cap)"
+  curl -fsS -H "Authorization: Bearer ${CAPPER_BEARER}" \
+    -F file=@"$CAP_SRC" -F name=alpine "$base/images/upload" >/dev/null \
+    && ok "alpine image registered" || die "image upload failed"
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
