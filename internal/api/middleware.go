@@ -9,7 +9,34 @@ import (
 	"time"
 
 	"capper/internal/authz"
+	"capper/internal/iam"
 )
+
+// Trusted reverse-proxy identity headers. The secret is a shared value injected
+// by nginx (never reaches the browser); the email is set by oauth2-proxy.
+const (
+	proxySecretHeader = "X-Capper-Proxy-Secret"
+	proxyEmailHeader  = "X-Auth-Request-Email"
+)
+
+// emailDomainAllowed reports whether email's domain is permitted for
+// proxy-authenticated identities. An empty allowlist permits any domain.
+func (s *Server) emailDomainAllowed(email string) bool {
+	if len(s.allowedEmailDomains) == 0 {
+		return true
+	}
+	at := strings.LastIndex(email, "@")
+	if at < 0 {
+		return false
+	}
+	dom := strings.ToLower(email[at+1:])
+	for _, d := range s.allowedEmailDomains {
+		if strings.ToLower(strings.TrimSpace(d)) == dom {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *Server) chain(next http.Handler) http.Handler {
 	h := next
@@ -106,9 +133,55 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Local username/password login is the pre-session entry point.
+		if r.URL.Path == "/api/v1/auth/login" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		// Node join uses join tokens — skip bearer auth.
 		if r.URL.Path == "/api/v1/nodes/join" {
 			next.ServeHTTP(w, r)
+			return
+		}
+		// Trusted reverse-proxy identity (oauth2-proxy at the edge). When a proxy
+		// secret is configured and present, authenticate as the forwarded SSO
+		// user: create on first sight (first user ever => admin), enforce the
+		// allowed email domains, and gate on approval status.
+		if s.proxySecret != "" && r.Header.Get(proxySecretHeader) != "" {
+			if !hmac.Equal([]byte(r.Header.Get(proxySecretHeader)), []byte(s.proxySecret)) {
+				writeError(w, http.StatusForbidden, "invalid proxy credentials")
+				return
+			}
+			email := strings.ToLower(strings.TrimSpace(r.Header.Get(proxyEmailHeader)))
+			if email == "" {
+				writeError(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
+			if !s.emailDomainAllowed(email) {
+				writeError(w, http.StatusForbidden, "email domain not allowed")
+				return
+			}
+			if s.ctrl.Store.IAM == nil {
+				writeError(w, http.StatusInternalServerError, "iam unavailable")
+				return
+			}
+			// No self-registration: only an existing, active user may sign in.
+			u, err := s.ctrl.Store.IAM.ResolveSSOUser(email)
+			if err != nil {
+				writeError(w, http.StatusForbidden, err.Error())
+				return
+			}
+			ac, err := s.buildAuthContext(r, iam.PrincipalUser, u.ID)
+			if err != nil {
+				writeError(w, http.StatusForbidden, err.Error())
+				return
+			}
+			if s.accountSuspended(ac.AccountID) {
+				writeError(w, http.StatusForbidden, "account suspended")
+				return
+			}
+			ctx := withAuthContext(withPrincipal(r.Context(), iam.PrincipalUser, u.ID), ac)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		auth := r.Header.Get("Authorization")

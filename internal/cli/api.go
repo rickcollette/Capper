@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -46,11 +48,31 @@ func apiCmd(opts *options) *cobra.Command {
 					daemon = control.NewDaemon(ctrl.Store, ctrl.Instances, dopts)
 					go daemon.Run(ctx)
 				}
+				// Bootstrap admin: ensure a configured email is an active admin
+				// so a fresh system has a first administrator (no self-registration).
+				if email := strings.TrimSpace(os.Getenv("CAPPER_BOOTSTRAP_ADMIN")); email != "" && ctrl.Store.IAM != nil {
+					if _, err := ctrl.Store.IAM.EnsureAdminUser(email, "google"); err != nil {
+						fmt.Printf("warning: bootstrap admin %q: %v\n", email, err)
+					} else {
+						fmt.Printf("bootstrap admin ensured: %s\n", email)
+					}
+				}
+
+				var allowedDomains []string
+				if v := strings.TrimSpace(os.Getenv("CAPPER_ALLOWED_DOMAINS")); v != "" {
+					for _, d := range strings.Split(v, ",") {
+						if d = strings.TrimSpace(d); d != "" {
+							allowedDomains = append(allowedDomains, d)
+						}
+					}
+				}
 				srv := capapi.NewServer(ctrl, capapi.Options{
-					Project:        opts.project,
-					StaticRoot:     aopts.staticRoot,
-					Daemon:         daemon,
-					AllowedOrigins: aopts.allowedOrigins,
+					Project:             opts.project,
+					StaticRoot:          aopts.staticRoot,
+					Daemon:              daemon,
+					AllowedOrigins:      aopts.allowedOrigins,
+					ProxySecret:         os.Getenv("CAPPER_PROXY_SECRET"),
+					AllowedEmailDomains: allowedDomains,
 				})
 				useTLS := aopts.tlsCert != "" && aopts.tlsKey != ""
 				scheme := "http"

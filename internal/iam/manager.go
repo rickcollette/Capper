@@ -5,8 +5,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os/user"
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // tokenCacheTTL bounds how long a token's existence (non-revocation) is trusted
@@ -27,6 +30,10 @@ type Manager struct {
 	// through to a store lookup and is denied.
 	tokenMu    sync.Mutex
 	tokenCache map[string]time.Time
+
+	// userMu serializes first-sight SSO user creation so the first-user-admin
+	// promotion can't race two simultaneous logins into two admins.
+	userMu sync.Mutex
 }
 
 // NewManager creates a Manager. storeRoot is the Capper store directory;
@@ -171,6 +178,12 @@ func (m *Manager) Bootstrap() error {
 		}
 	}
 
+	// Seed the assignable "member" role (full non-admin access; granted to SSO
+	// users at approval time — never granted automatically here).
+	if err := m.ensureMemberRole(); err != nil {
+		return err
+	}
+
 	// Grant admin role to that user (idempotent: check first).
 	grants, _ := m.store.GrantsForPrincipal(PrincipalUser, adminUser.ID)
 	for _, g := range grants {
@@ -189,6 +202,241 @@ func (m *Manager) Bootstrap() error {
 		return err
 	}
 	return m.SeedManagedPolicies()
+}
+
+// RoleAdmin and RoleMember are the two assignable RBAC roles. Admin is granted
+// to the first user (and the local CLI user); member is assigned to approved SSO
+// users by an admin. Both use the legacy statements-based policy path that
+// Evaluate understands (managed_* policies are document_json-only).
+const (
+	RoleAdmin  = "admin"
+	RoleMember = "member"
+)
+
+// memberActions is the member role's allow-list: full access to workload
+// resources, but no IAM administration and no organization/account admin.
+var memberActions = []string{
+	"compute:*", "instance:*", "image:*", "network:*", "vpc:*",
+	"dns:*", "firewall:*", "lb:*", "ingress:*", "waf:*",
+	"storage:*", "s3:*", "backup:*", "snapshot:*", "database:*",
+	"stack:*", "registry:*", "queue:*", "kms:*", "secret:*",
+	"certificates:*", "scheduler:*", "node:list", "node:get",
+	"quota:get", "quota:list", "audit:list", "audit:get",
+	"iam:list*", "iam:get*",
+}
+
+// ensureMemberRole idempotently creates the "member" policy + role.
+func (m *Manager) ensureMemberRole() error {
+	if _, err := m.store.GetPolicy("member"); err != nil {
+		if err2 := m.store.InsertPolicy(Policy{
+			ID:   "pol_member",
+			Name: "member",
+			Statements: []Statement{{
+				Effect:    EffectAllow,
+				Actions:   memberActions,
+				Resources: []string{"*"},
+			}},
+		}); err2 != nil {
+			return fmt.Errorf("iam: bootstrap: insert member policy: %w", err2)
+		}
+	}
+	if _, err := m.store.GetRole("member"); err != nil {
+		if err2 := m.store.InsertRole(Role{ID: "role_member", Name: "member"}); err2 != nil {
+			return fmt.Errorf("iam: bootstrap: insert member role: %w", err2)
+		}
+	}
+	if err := m.store.AttachPolicy("member", "member"); err != nil {
+		return fmt.Errorf("iam: bootstrap: attach member policy: %w", err)
+	}
+	return nil
+}
+
+// ErrAccessDenied is returned when an SSO identity has no matching enabled user
+// (no self-registration: only admin-provisioned users may sign in).
+var ErrAccessDenied = fmt.Errorf("access denied")
+
+// ResolveSSOUser maps a verified SSO email to an existing, active user. There is
+// NO auto-registration: an unknown email is rejected, and a pending/disabled
+// user is denied until an admin enables them.
+func (m *Manager) ResolveSSOUser(email string) (User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return User{}, ErrAccessDenied
+	}
+	u, err := m.store.GetUserByEmail(email)
+	if err != nil {
+		return User{}, ErrAccessDenied
+	}
+	if u.Status != UserStatusActive {
+		return User{}, fmt.Errorf("account %s", u.Status)
+	}
+	return u, nil
+}
+
+// VerifyPassword authenticates a local user by username (name or email) and
+// password, returning the user only if active with a matching password.
+func (m *Manager) VerifyPassword(username, password string) (User, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || password == "" {
+		return User{}, ErrAccessDenied
+	}
+	u, err := m.store.GetUser(username)
+	if err != nil {
+		// Allow login by email too.
+		if u, err = m.store.GetUserByEmail(username); err != nil {
+			return User{}, ErrAccessDenied
+		}
+	}
+	hash, err := m.store.GetPasswordHash(u.ID)
+	if err != nil || hash == "" {
+		return User{}, ErrAccessDenied
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		return User{}, ErrAccessDenied
+	}
+	if u.Status != UserStatusActive {
+		return User{}, fmt.Errorf("account %s", u.Status)
+	}
+	return u, nil
+}
+
+// SetPassword sets (or, with empty plaintext, clears) a user's password.
+func (m *Manager) SetPassword(idOrName, plaintext string) error {
+	if plaintext == "" {
+		return m.store.SetPasswordHash(idOrName, "")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return m.store.SetPasswordHash(idOrName, string(hash))
+}
+
+// CreateManagedUser creates an admin-provisioned user (no self-registration).
+// provider is "local" (password login) or "google" (SSO by email). The user is
+// created active; assign roles separately.
+func (m *Manager) CreateManagedUser(name, email, provider string) (User, error) {
+	name = strings.TrimSpace(name)
+	email = strings.ToLower(strings.TrimSpace(email))
+	if provider == "" {
+		provider = "local"
+	}
+	if provider == "google" && email == "" {
+		return User{}, fmt.Errorf("email required for google users")
+	}
+	if name == "" {
+		name = email
+	}
+	if name == "" {
+		return User{}, fmt.Errorf("name or email required")
+	}
+	m.userMu.Lock()
+	defer m.userMu.Unlock()
+	if email != "" {
+		if _, err := m.store.GetUserByEmail(email); err == nil {
+			return User{}, fmt.Errorf("user with email %s already exists", email)
+		}
+	}
+	u := User{
+		ID:       newID("usr"),
+		Name:     name,
+		Email:    email,
+		Provider: provider,
+		Status:   UserStatusActive,
+	}
+	if err := m.store.InsertUser(u); err != nil {
+		return User{}, err
+	}
+	return u, nil
+}
+
+// EnsureAdminUser idempotently makes an email an active admin (deploy bootstrap
+// so a fresh system has a first administrator without self-registration).
+func (m *Manager) EnsureAdminUser(email, provider string) (User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return User{}, fmt.Errorf("empty email")
+	}
+	if provider == "" {
+		provider = "google"
+	}
+	u, err := m.store.GetUserByEmail(email)
+	if err != nil {
+		if u, err = m.CreateManagedUser(email, email, provider); err != nil {
+			return User{}, err
+		}
+	}
+	if u.Status != UserStatusActive {
+		_ = m.store.SetUserStatus(u.ID, UserStatusActive)
+	}
+	if err := m.assignRoleID(PrincipalUser, u.ID, "role_admin"); err != nil {
+		return User{}, err
+	}
+	return u, nil
+}
+
+// assignRoleID grants a role (by role ID) to a principal, idempotently.
+func (m *Manager) assignRoleID(pt, pid, roleID string) error {
+	grants, _ := m.store.GrantsForPrincipal(pt, pid)
+	for _, g := range grants {
+		if g.RoleID == roleID {
+			return nil
+		}
+	}
+	return m.store.InsertGrant(Grant{
+		ID:            newID("grn"),
+		PrincipalType: pt,
+		PrincipalID:   pid,
+		RoleID:        roleID,
+		ResourceScope: "*",
+	})
+}
+
+// AssignRole grants a named role (e.g. "admin"/"member") to a user.
+func (m *Manager) AssignRole(userID, roleName string) error {
+	role, err := m.store.GetRole(roleName)
+	if err != nil {
+		return err
+	}
+	return m.assignRoleID(PrincipalUser, userID, role.ID)
+}
+
+// RevokeRole removes a named role grant from a user.
+func (m *Manager) RevokeRole(userID, roleName string) error {
+	role, err := m.store.GetRole(roleName)
+	if err != nil {
+		return err
+	}
+	grants, err := m.store.GrantsForPrincipal(PrincipalUser, userID)
+	if err != nil {
+		return err
+	}
+	for _, g := range grants {
+		if g.RoleID == role.ID {
+			if err := m.store.DeleteGrant(g.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// RolesForUser returns the role names currently granted to a user.
+func (m *Manager) RolesForUser(userID string) []string {
+	grants, err := m.store.GrantsForPrincipal(PrincipalUser, userID)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, g := range grants {
+		if g.PrincipalType != PrincipalUser || g.PrincipalID != userID {
+			continue // skip inherited group grants
+		}
+		if r, err := m.store.GetRole(g.RoleID); err == nil {
+			out = append(out, r.Name)
+		}
+	}
+	return out
 }
 
 // LookupByS3AccessKey finds the principal that owns the given S3 access key.

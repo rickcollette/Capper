@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"capper/internal/controller"
 	"capper/internal/control"
+	"capper/internal/controller"
 	csdbackend "capper/internal/csd/backend"
 	csdserver "capper/internal/csd/server"
-	"capper/internal/store"
 	capstore "capper/internal/storage"
+	"capper/internal/store"
 	"capper/internal/vpcmover"
 )
 
@@ -38,16 +38,23 @@ func (s *Server) csd() *csdserver.Server {
 
 // Server is the Capper REST API control plane.
 type Server struct {
-	ctrl         controller.Controller
-	project      string
-	mux          *http.ServeMux
-	daemon       *control.Daemon
-	staticRoot   string
-	storage      *capstore.Manager
-	vpc          *vpcmover.Runner
+	ctrl       controller.Controller
+	project    string
+	mux        *http.ServeMux
+	daemon     *control.Daemon
+	staticRoot string
+	storage    *capstore.Manager
+	vpc        *vpcmover.Runner
 	// allowedOrigins is the operator-configured CORS allowlist of exact origins
 	// (e.g. "https://console.example.com"). Loopback origins are always allowed.
 	allowedOrigins []string
+	// proxySecret, when set, enables trusted reverse-proxy identity: a request
+	// carrying this secret in X-Capper-Proxy-Secret plus an X-Auth-Request-Email
+	// (injected by oauth2-proxy at the edge) is authenticated as that SSO user.
+	proxySecret string
+	// allowedEmailDomains restricts proxy-authenticated identities to these email
+	// domains (defense-in-depth alongside oauth2-proxy). Empty = no restriction.
+	allowedEmailDomains []string
 	// csdMounts tracks live FUSE mounts keyed by attachment ID.
 	csdMounts   map[string]csdMountHandle
 	csdMountsMu sync.Mutex
@@ -72,6 +79,11 @@ type Options struct {
 	// credentialed cross-origin requests. Loopback origins (localhost / 127.0.0.1
 	// / ::1, any port) are always allowed regardless of this list.
 	AllowedOrigins []string
+	// ProxySecret enables trusted reverse-proxy (oauth2-proxy) identity when set.
+	ProxySecret string
+	// AllowedEmailDomains restricts proxy-authenticated SSO identities to these
+	// email domains. Empty disables the server-side domain check.
+	AllowedEmailDomains []string
 }
 
 // NewServer creates an API server wrapping the given controller.
@@ -88,15 +100,17 @@ func NewServer(ctrl controller.Controller, opts Options) *Server {
 		_ = err
 	}
 	s := &Server{
-		ctrl:       ctrl,
-		project:    opts.Project,
-		mux:        http.NewServeMux(),
-		daemon:     opts.Daemon,
-		staticRoot: opts.StaticRoot,
-		storage:        sm,
-		vpc:            vpcmover.NewRunner(ctrl.Store.VPCMover),
-		csdMounts:      make(map[string]csdMountHandle),
-		allowedOrigins: opts.AllowedOrigins,
+		ctrl:                ctrl,
+		project:             opts.Project,
+		mux:                 http.NewServeMux(),
+		daemon:              opts.Daemon,
+		staticRoot:          opts.StaticRoot,
+		storage:             sm,
+		vpc:                 vpcmover.NewRunner(ctrl.Store.VPCMover),
+		csdMounts:           make(map[string]csdMountHandle),
+		allowedOrigins:      opts.AllowedOrigins,
+		proxySecret:         opts.ProxySecret,
+		allowedEmailDomains: opts.AllowedEmailDomains,
 	}
 	s.routes()
 
@@ -157,7 +171,6 @@ func addrIsLoopback(addr string) bool {
 	return false
 }
 
-
 func (s *Server) routes() {
 	// Org/account management
 	s.mux.HandleFunc("GET /api/v1/orgs", s.handleListOrgs)
@@ -197,6 +210,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/auth/session", s.handleAuthSession)
 	s.mux.HandleFunc("DELETE /api/v1/auth/session", s.handleAuthSession)
 	s.mux.HandleFunc("GET /api/v1/auth/session", s.handleAuthSessionInfo)
+	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLocalLogin)
+	s.mux.HandleFunc("GET /api/v1/auth/google/callback", s.handleGoogleCallback)
 
 	s.mux.HandleFunc("GET /api/v1/instances", s.handleListInstances)
 	s.mux.HandleFunc("POST /api/v1/instances", s.handleCreateInstance)
@@ -290,6 +305,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/iam/users", s.handleListIAMUsers)
 	s.mux.HandleFunc("POST /api/v1/iam/users", s.handleCreateIAMUser)
 	s.mux.HandleFunc("DELETE /api/v1/iam/users/{name}", s.handleDeleteIAMUser)
+
+	// RBAC user lifecycle: listing, self-identity, admin provisioning, roles.
+	s.mux.HandleFunc("GET /api/v1/users", s.handleListRBACUsers)
+	s.mux.HandleFunc("GET /api/v1/users/me", s.handleCurrentUser)
+	s.mux.HandleFunc("POST /api/v1/users", s.handleCreateRBACUser)
+	s.mux.HandleFunc("POST /api/v1/users/{id}/password", s.handleSetUserPassword)
+	s.mux.HandleFunc("POST /api/v1/users/{id}/approve", s.handleApproveUser)
+	s.mux.HandleFunc("POST /api/v1/users/{id}/disable", s.handleDisableUser)
+	s.mux.HandleFunc("POST /api/v1/users/{id}/roles", s.handleGrantUserRole)
+	s.mux.HandleFunc("DELETE /api/v1/users/{id}/roles/{role}", s.handleRevokeUserRole)
 	s.mux.HandleFunc("GET /api/v1/iam/groups", s.handleListIAMGroups)
 	s.mux.HandleFunc("POST /api/v1/iam/groups", s.handleCreateIAMGroup)
 	s.mux.HandleFunc("POST /api/v1/iam/groups/{group}/members", s.handleAddGroupMember)
