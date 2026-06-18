@@ -45,4 +45,5 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export PS1='\u@\h:\w# '
 PROF
 
+rm -rf apktools
 echo "Alpine full-toolset rootfs ready at examples/alpine/rootfs ($(du -sh rootfs | cut -f1))"
