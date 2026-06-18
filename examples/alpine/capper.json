@@ -1,0 +1,25 @@
+{
+  "name": "alpine",
+  "version": "3.23.0",
+  "rootfs": "./rootfs",
+  "entrypoint": ["/bin/sh"],
+  "args": ["-c", "echo hello from alpine && cat /etc/alpine-release && sleep 3600"],
+  "env": {
+    "PATH": "/sbin:/bin:/usr/sbin:/usr/bin"
+  },
+  "workingDir": "/",
+  "shell": "/bin/sh",
+  "user": {
+    "uid": 0,
+    "gid": 0
+  },
+  "network": {
+    "enabled": false
+  },
+  "resources": {
+    "memoryBytes": 134217728,
+    "cpuTimeSecs": 300,
+    "maxProcesses": 128,
+    "fileSizeBytes": 16777216
+  }
+}

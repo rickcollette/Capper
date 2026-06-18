@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "This example rootfs needs a real static shell such as busybox copied to /bin/sh before running."

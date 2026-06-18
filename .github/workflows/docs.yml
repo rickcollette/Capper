@@ -1,0 +1,50 @@
+name: Docs
+
+# Regenerates the source-derived reference (CLI command tree + API routes), then
+# validates front matter/structure. Fails if the committed reference is stale or
+# any page has invalid front matter.
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'docs/**'
+      - 'tools/docgen/**'
+      - 'internal/cli/**'
+      - 'internal/api/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'tools/docgen/**'
+      - 'internal/cli/**'
+      - 'internal/api/**'
+  workflow_dispatch:
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Regenerate source-derived reference
+        run: make docs-gen
+
+      - name: Fail if generated reference is stale
+        run: |
+          if ! git diff --quiet -- docs/src/reference/cli/capper.md docs/src/reference/api/routes.md; then
+            echo "::error::Generated CLI/API reference is out of date. Run 'make docs-gen' and commit the result."
+            git --no-pager diff -- docs/src/reference/cli/capper.md docs/src/reference/api/routes.md | head -100
+            exit 1
+          fi
+
+      - name: Validate docs
+        run: make docs-check
+
+      - name: Docgen tests
+        run: go test ./tools/docgen/...

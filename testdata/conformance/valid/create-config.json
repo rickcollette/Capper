@@ -1,0 +1,13 @@
+{
+  "name": "hello",
+  "version": "0.1.0",
+  "rootfs": "./rootfs",
+  "entrypoint": ["/bin/sh"],
+  "args": ["-c", "echo hello"],
+  "env": {"HOME": "/root"},
+  "workingDir": "/",
+  "shell": "/bin/sh",
+  "user": {"uid": 0, "gid": 0},
+  "network": {"enabled": false},
+  "resources": {"memoryBytes": 134217728}
+}

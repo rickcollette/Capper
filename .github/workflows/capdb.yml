@@ -1,0 +1,86 @@
+name: CapDB backend
+
+# Builds the CapDB client library + server (cloned from the CapDB repo) and runs
+# the cgo driver's integration suite (`make test-capdb`). This is a separate,
+# opt-in job: the default `go test ./...` stays pure-Go (modernc SQLite) and does
+# not need cgo. The CapDB engine lives at https://github.com/rickcollette/CapDB.
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'internal/capdbdriver/**'
+      - 'internal/store/open.go'
+      - 'internal/store/capdb_register.go'
+      - 'Makefile'
+      - '.github/workflows/capdb.yml'
+  pull_request:
+    paths:
+      - 'internal/capdbdriver/**'
+      - 'internal/store/**'
+      - 'Makefile'
+      - '.github/workflows/capdb.yml'
+  workflow_dispatch:
+
+env:
+  # CapDB is checked out into ./CapDB (the Makefile default). github.workspace is
+  # the Capper checkout root, so this matches `make capdb-fetch` locally.
+  CAPDB_DIR: ${{ github.workspace }}/CapDB
+
+jobs:
+  capdb-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out CapDB engine
+        uses: actions/checkout@v4
+        with:
+          repository: rickcollette/CapDB
+          path: CapDB
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install C toolchain + OpenSSL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libssl-dev zlib1g-dev python3
+
+      - name: Build CapDB (client lib + server)
+        run: make capdb
+
+      - name: Run CapDB driver integration suite
+        run: make test-capdb
+
+      - name: Sanity-check default pure-Go build still works
+        run: CGO_ENABLED=0 go build ./...
+
+  capdb-sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out CapDB engine
+        uses: actions/checkout@v4
+        with:
+          repository: rickcollette/CapDB
+          path: CapDB
+
+      - name: Install C toolchain + OpenSSL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libssl-dev zlib1g-dev python3
+
+      - name: Build CapDB with ASan + UBSan and run ctest
+        # The wire parser handles untrusted frames; build the C with the address
+        # and undefined-behavior sanitizers and run the C test suite under them.
+        run: |
+          export CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+          export LDFLAGS="-fsanitize=address,undefined"
+          export ASAN_OPTIONS=detect_leaks=0
+          export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+          make capdb
+          ctest --test-dir build/capdb --output-on-failure || \
+            ctest --test-dir build/capdb -V
