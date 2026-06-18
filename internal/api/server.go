@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"capper/internal/control"
+	"capper/internal/compute"
 	"capper/internal/controller"
 	csdbackend "capper/internal/csd/backend"
 	csdserver "capper/internal/csd/server"
@@ -113,6 +114,8 @@ func NewServer(ctrl controller.Controller, opts Options) *Server {
 		allowedEmailDomains: opts.AllowedEmailDomains,
 	}
 	s.routes()
+
+	_ = compute.NewManager(ctrl.Store.Compute).SeedStandardTypes()
 
 	if !opts.DevMode {
 		if ctrl.Store.IAM == nil {

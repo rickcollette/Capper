@@ -5,7 +5,8 @@
 //  2. Reads CAPPER_METADATA_TOKEN_FILE to obtain the instance token.
 //  3. Fetches meta-data and network-data from capmeta.
 //  4. Applies hostname, writes /etc/hosts and /etc/resolv.conf.
-//  5. Execs the original entrypoint (passed as arguments after "--").
+//  5. Runs user-data when it is a #! script (cloud-init style provisioning).
+//  6. Execs the original entrypoint (passed as arguments after "--").
 //
 // Debug subcommands:
 //
@@ -21,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -72,6 +74,7 @@ func main() {
 	applyHostname(meta)
 	writeHosts(meta, netData)
 	writeResolvConf(netData)
+	runUserData(baseURL, token)
 
 	// Exec entrypoint — everything after "--" or after capinit itself.
 	args := entrypointArgs()
@@ -310,6 +313,28 @@ func strField(m map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func runUserData(baseURL, token string) {
+	body, err := doRequest(baseURL+"/user-data", token)
+	if err != nil || len(strings.TrimSpace(string(body))) == 0 {
+		return
+	}
+	script := strings.TrimSpace(string(body))
+	if !strings.HasPrefix(script, "#!") {
+		return
+	}
+	path := "/run/capinit-user-data.sh"
+	if err := os.WriteFile(path, []byte(script+"\n"), 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "capinit: user-data write: %v\n", err)
+		return
+	}
+	cmd := exec.Command(path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "capinit: user-data: %v\n", err)
+	}
 }
 
 func fatal(format string, args ...any) {

@@ -115,6 +115,7 @@ func (s *Server) handleCreateCapsuleType(w http.ResponseWriter, r *http.Request)
 		Family      string `json:"family"`
 		CPUCount    int    `json:"cpuCount"`
 		MemoryBytes int64  `json:"memoryBytes"`
+		DiskBytes   int64  `json:"diskBytes"`
 		PIDLimit    int    `json:"pidLimit"`
 		Description string `json:"description"`
 	}
@@ -127,6 +128,7 @@ func (s *Server) handleCreateCapsuleType(w http.ResponseWriter, r *http.Request)
 		Family:      req.Family,
 		CPUCount:    req.CPUCount,
 		MemoryBytes: req.MemoryBytes,
+		DiskBytes:   req.DiskBytes,
 		PIDLimit:    req.PIDLimit,
 		Description: req.Description,
 	}

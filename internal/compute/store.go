@@ -60,6 +60,7 @@ func InitSchema(db *sql.DB) error {
 			family       TEXT NOT NULL DEFAULT 'compute',
 			cpu_count    INTEGER NOT NULL DEFAULT 1,
 			memory_bytes INTEGER NOT NULL DEFAULT 0,
+			disk_bytes   INTEGER NOT NULL DEFAULT 0,
 			pid_limit    INTEGER NOT NULL DEFAULT 256,
 			gpu_eligible INTEGER NOT NULL DEFAULT 0,
 			gpu_count    INTEGER NOT NULL DEFAULT 0,
@@ -84,6 +85,7 @@ func InitSchema(db *sql.DB) error {
 			return fmt.Errorf("compute.InitSchema: %w", err)
 		}
 	}
+	_, _ = db.Exec(`ALTER TABLE compute_instance_types ADD COLUMN disk_bytes INTEGER NOT NULL DEFAULT 0`)
 	return nil
 }
 
@@ -446,17 +448,18 @@ func (s *Store) TemplateInUse(templateID string) (bool, error) {
 func (s *Store) UpsertInstanceType(it InstanceType) error {
 	_, err := s.db.Exec(
 		`INSERT INTO compute_instance_types
-			(id, name, family, cpu_count, memory_bytes, pid_limit, gpu_eligible, gpu_count, locked, description, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+			(id, name, family, cpu_count, memory_bytes, disk_bytes, pid_limit, gpu_eligible, gpu_count, locked, description, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(name) DO UPDATE SET
 			family=excluded.family,
 			cpu_count=excluded.cpu_count,
 			memory_bytes=excluded.memory_bytes,
+			disk_bytes=excluded.disk_bytes,
 			pid_limit=excluded.pid_limit,
 			gpu_eligible=excluded.gpu_eligible,
 			gpu_count=excluded.gpu_count,
 			description=excluded.description`,
-		it.ID, it.Name, it.Family, it.CPUCount, it.MemoryBytes, it.PIDLimit,
+		it.ID, it.Name, it.Family, it.CPUCount, it.MemoryBytes, it.DiskBytes, it.PIDLimit,
 		boolInt(it.GPUEligible), it.GPUCount, boolInt(it.Locked), it.Description, it.CreatedAt,
 	)
 	if err != nil {
@@ -467,7 +470,7 @@ func (s *Store) UpsertInstanceType(it InstanceType) error {
 
 func (s *Store) GetInstanceType(nameOrID string) (InstanceType, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, family, cpu_count, memory_bytes, pid_limit, gpu_eligible, gpu_count, locked, description, created_at
+		`SELECT id, name, family, cpu_count, memory_bytes, disk_bytes, pid_limit, gpu_eligible, gpu_count, locked, description, created_at
 		FROM compute_instance_types WHERE id=? OR name=? LIMIT 1`,
 		nameOrID, nameOrID)
 	return scanInstanceType(row)
@@ -475,7 +478,7 @@ func (s *Store) GetInstanceType(nameOrID string) (InstanceType, error) {
 
 func (s *Store) ListInstanceTypes() ([]InstanceType, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, family, cpu_count, memory_bytes, pid_limit, gpu_eligible, gpu_count, locked, description, created_at
+		`SELECT id, name, family, cpu_count, memory_bytes, disk_bytes, pid_limit, gpu_eligible, gpu_count, locked, description, created_at
 		FROM compute_instance_types ORDER BY family, name`)
 	if err != nil {
 		return nil, err
@@ -531,7 +534,7 @@ func (s *Store) DeprecateInstanceType(nameOrID string) (InstanceType, error) {
 func scanInstanceType(s rowScanner) (InstanceType, error) {
 	var it InstanceType
 	var gpuEligible, locked int
-	err := s.Scan(&it.ID, &it.Name, &it.Family, &it.CPUCount, &it.MemoryBytes, &it.PIDLimit,
+	err := s.Scan(&it.ID, &it.Name, &it.Family, &it.CPUCount, &it.MemoryBytes, &it.DiskBytes, &it.PIDLimit,
 		&gpuEligible, &it.GPUCount, &locked, &it.Description, &it.CreatedAt)
 	if err != nil {
 		return InstanceType{}, fmt.Errorf("compute: scan instance type: %w", err)

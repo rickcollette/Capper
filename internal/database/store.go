@@ -113,6 +113,11 @@ func (s *Store) List(project string) ([]ManagedDB, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) UpdateInstanceID(id, instanceID string, status DBStatus) error {
+	_, err := s.db.Exec(`UPDATE managed_databases SET instance_id=?, status=? WHERE id=?`, instanceID, status, id)
+	return err
+}
+
 func (s *Store) UpdateStatus(id string, status DBStatus) error {
 	_, err := s.db.Exec(`UPDATE managed_databases SET status=? WHERE id=?`, status, id)
 	return err

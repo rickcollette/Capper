@@ -347,6 +347,24 @@ func (m *Manager) SeedBuiltinTypes() error {
 	return nil
 }
 
+// SeedStandardTypes seeds the four OS-agnostic AIO capsule sizes (pick OS via image).
+func (m *Manager) SeedStandardTypes() error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	types := []InstanceType{
+		{ID: "itype_cap_micro", Name: "cap-micro", Family: InstanceTypeFamilyStandard, CPUCount: 1, MemoryBytes: 512 << 20, DiskBytes: 8 << 30, PIDLimit: 256, Locked: true, Description: "1 CPU · 512MB · 8GB disk · micro"},
+		{ID: "itype_cap_small", Name: "cap-small", Family: InstanceTypeFamilyStandard, CPUCount: 1, MemoryBytes: 1 << 30, DiskBytes: 16 << 30, PIDLimit: 256, Locked: true, Description: "1 CPU · 1GB · 16GB disk · small"},
+		{ID: "itype_cap_medium", Name: "cap-medium", Family: InstanceTypeFamilyStandard, CPUCount: 2, MemoryBytes: 2 << 30, DiskBytes: 24 << 30, PIDLimit: 512, Locked: true, Description: "2 CPU · 2GB · 24GB disk · medium"},
+		{ID: "itype_cap_large", Name: "cap-large", Family: InstanceTypeFamilyStandard, CPUCount: 4, MemoryBytes: 4 << 30, DiskBytes: 32 << 30, PIDLimit: 512, Locked: true, Description: "4 CPU · 4GB · 32GB disk · large"},
+	}
+	for i := range types {
+		types[i].CreatedAt = now
+		if err := m.store.UpsertInstanceType(types[i]); err != nil {
+			return fmt.Errorf("seed standard type %s: %w", types[i].Name, err)
+		}
+	}
+	return nil
+}
+
 // CreateInstanceType creates a new (custom, non-locked) instance type.
 func (m *Manager) CreateInstanceType(it InstanceType) (InstanceType, error) {
 	if it.Name == "" {

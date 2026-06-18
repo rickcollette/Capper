@@ -18,6 +18,7 @@ import (
 	"capper/internal/network"
 	"capper/internal/runtime"
 	"capper/internal/store"
+	"capper/internal/systemlabels"
 	"capper/internal/topology"
 	"capper/internal/types"
 )
@@ -65,7 +66,14 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, err)
 		return
 	}
-	writeData(w, instances, nil)
+	visible := make([]types.Instance, 0, len(instances))
+	for _, inst := range instances {
+		if systemlabels.IsHidden(inst.Labels) {
+			continue
+		}
+		visible = append(visible, inst)
+	}
+	writeData(w, visible, nil)
 }
 
 func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +182,15 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusPaymentRequired, Envelope{Error: qerr.Error()})
 		return
 	}
+	if err := s.ctrl.Store.CheckHostDeployLimit(); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
 
+	if req.Labels == nil {
+		req.Labels = make(map[string]string)
+	}
+	req.Labels["project"] = s.project
 	if req.Env == nil {
 		req.Env = make(map[string]string)
 	}
@@ -568,6 +584,10 @@ func (s *Server) resolveInstanceTypeResources(r *http.Request, image, typeName s
 	if it.PIDLimit > 0 {
 		overrides.Limits.MaxProcesses = int64(it.PIDLimit)
 		overrides.PidsSet = true
+	}
+	if it.DiskBytes > 0 {
+		overrides.Limits.DiskBytes = it.DiskBytes
+		overrides.DiskSet = true
 	}
 	return overrides, nil
 }
