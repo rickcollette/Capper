@@ -100,6 +100,14 @@ func (m *Manager) Apply(limits types.ResourceLimits) []error {
 			errs = append(errs, fmt.Errorf("pids.max: %w", err))
 		}
 	}
+	if limits.CPUCount > 0 {
+		// cgroup v2 cpu.max: $QUOTA $PERIOD (microseconds). One full CPU ≈ 100ms/100ms.
+		const period = 100000
+		quota := limits.CPUCount * period
+		if err := m.write("cpu.max", fmt.Sprintf("%d %d\n", quota, period)); err != nil {
+			errs = append(errs, fmt.Errorf("cpu.max: %w", err))
+		}
+	}
 	return errs
 }
 

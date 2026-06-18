@@ -39,6 +39,8 @@ func (m InstanceManager) ProvisionDatabase(meta *metadata.Manager, db database.M
 	resources.DiskSet = true
 	resources.Limits.MaxProcesses = 256
 	resources.PidsSet = true
+	resources.Limits.CPUCount = 1
+	resources.CPUSet = true
 
 	userData := dbEngineUserData(db.Engine)
 	entrypoint, args := dbEngineEntrypoint(db.Engine)

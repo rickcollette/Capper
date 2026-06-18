@@ -150,6 +150,25 @@ func TestWriteProcOverrides(t *testing.T) {
 	}
 }
 
+// TestWriteProcOverridesMultiCPU verifies cpuinfo reflects the vCPU count.
+func TestWriteProcOverridesMultiCPU(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteProcOverrides(dir, types.ResourceLimits{CPUCount: 4, MemoryBytes: 1024 * 1024 * 1024}); err != nil {
+		t.Fatalf("WriteProcOverrides: %v", err)
+	}
+	cpuinfo, err := os.ReadFile(dir + "/proc-overrides/cpuinfo")
+	if err != nil {
+		t.Fatalf("cpuinfo: %v", err)
+	}
+	s := string(cpuinfo)
+	if !strings.Contains(s, "processor\t: 3") {
+		t.Errorf("expected 4 processors, missing processor 3:\n%s", s)
+	}
+	if strings.Contains(s, "processor\t: 4") {
+		t.Error("cpuinfo exposes too many processors")
+	}
+}
+
 // TestWriteProcOverridesDefault verifies that zero MemoryBytes uses a capped default.
 func TestWriteProcOverridesDefault(t *testing.T) {
 	dir := t.TempDir()
