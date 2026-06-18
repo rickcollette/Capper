@@ -49,6 +49,7 @@ Run `capper <command> --help` for the same information at the terminal. Global p
 - [`event`](#capper-event) — view resource lifecycle events
 - [`exec`](#capper-exec) — execute a command inside a running instance
 - [`firewall`](#capper-firewall) — manage network firewall policies (nftables)
+- [`fleet`](#capper-fleet) — manage rolling upgrades across a fleet of node agents
 - [`fn`](#capper-fn) — manage serverless functions
 - [`governance`](#capper-governance) — manage governance policies
 - [`health`](#capper-health) — instance health check status
@@ -87,6 +88,7 @@ Run `capper <command> --help` for the same information at the terminal. Global p
 - [`run`](#capper-run) — run a .cap image
 - [`schedule`](#capper-schedule) — manage cron-based schedules
 - [`scheduler`](#capper-scheduler) — simulate and inspect the region scheduler
+- [`schema`](#capper-schema) — inspect and snapshot the control-plane database schema
 - [`secret`](#capper-secret) — manage encrypted secrets
 - [`sg`](#capper-sg) — manage VPC security groups
 - [`sign`](#capper-sign) — sign a .cap image with an Ed25519 private key
@@ -97,6 +99,7 @@ Run `capper <command> --help` for the same information at the terminal. Global p
 - [`storage`](#capper-storage) — manage volumes, buckets, objects, and snapshots
 - [`validate`](#capper-validate) — validate a config file or image
 - [`verify`](#capper-verify) — verify the Ed25519 signature on a .cap image
+- [`version`](#capper-version) — print the capper version, commit, and build info
 - [`volume`](#capper-volume) — manage CSD shared volumes
 - [`vpc`](#capper-vpc) — manage VPCs
 - [`zone`](#capper-zone) — manage zones
@@ -197,7 +200,20 @@ Example:
 capper aio init --backend capdb && capper aio up
 ```
 
-**Subcommands:** `doctor` · `down` · `init` · `logs` · `reset` · `status` · `up`
+**Subcommands:** `check-update` · `doctor` · `down` · `init` · `logs` · `reset` · `status` · `up` · `upgrade`
+
+### `capper aio check-update`
+
+check the update feed for a newer version
+
+```text
+capper aio check-update [flags]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--channel` | `stable` | update channel to check |
+| `--feed` | — | channel feed URL (default $CAPPER_UPDATE_FEED) |
 
 ### `capper aio doctor`
 
@@ -266,6 +282,30 @@ Start AIO services
 ```text
 capper aio up
 ```
+
+### `capper aio upgrade`
+
+Upgrade (or roll back) the AIO node from a release bundle
+
+Verifies and stages a release bundle into a versioned directory, snapshots the
+database, swaps the active version, runs migrations, and health-gates the new
+version — automatically rolling back binaries and database on failure.
+
+```text
+capper aio upgrade [flags]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--bundle` | — | path to a capper-aio-*.tgz release bundle |
+| `--channel` | — | update channel to pull from the feed (e.g. stable, edge) |
+| `--feed` | — | channel feed URL (default $CAPPER_UPDATE_FEED) |
+| `--rollback` | — | roll back to the previous version |
+| `--sha256` | — | expected SHA-256 of the bundle (hex) |
+| `--timeout` | `1m0s` | health-gate timeout before auto-rollback |
+| `--url` | — | URL to download the release bundle from |
+| `--version` | — | override the version label for the staged dir |
+| `--yes` | — | do not prompt for confirmation |
 
 ## `capper alert`
 
@@ -1503,6 +1543,47 @@ enable a disabled rule
 ```text
 capper firewall rule enable NETWORK RULE_ID
 ```
+
+## `capper fleet`
+
+manage rolling upgrades across a fleet of node agents
+
+**Subcommands:** `status` · `upgrade`
+
+### `capper fleet status`
+
+show each node's agent version and drain state
+
+```text
+capper fleet status [flags]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--control-url` | — | control-plane base URL (default $CAPPER_CONTROL_URL or http://localhost:8080) |
+| `--token` | — | bearer token (default $CAPPER_TOKEN) |
+
+### `capper fleet upgrade`
+
+rolling-upgrade node agents to a target version, batch by batch
+
+Drains each node, runs the per-node upgrade command (--exec), waits for the
+node to re-report the target version, then uncordons it — N nodes at a time,
+with a control-plane health gate between batches. Stops on the first failure.
+
+```text
+capper fleet upgrade --target VERSION [flags]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--batch` | `1` | number of nodes to upgrade concurrently |
+| `--control-url` | — | control-plane base URL (default $CAPPER_CONTROL_URL or http://localhost:8080) |
+| `--dry-run` | — | print the plan without making changes |
+| `--exec` | — | per-node upgrade command; {node} is substituted (e.g. 'ssh {node} capper-self-upgrade') |
+| `--target` | — | target agent version (required) |
+| `--timeout` | `5m0s` | per-node convergence timeout |
+| `--token` | — | bearer token (default $CAPPER_TOKEN) |
 
 ## `capper fn`
 
@@ -3622,6 +3703,28 @@ capper scheduler simulate [flags]
 | `--strategy` | `spread-zones` | placement strategy |
 | `--zone` | — | preferred zone |
 
+## `capper schema`
+
+inspect and snapshot the control-plane database schema
+
+**Subcommands:** `backup` · `status`
+
+### `capper schema backup`
+
+write a consistent online snapshot of the control-plane database
+
+```text
+capper schema backup [DEST]
+```
+
+### `capper schema status`
+
+show applied + pending schema migrations and the schema version
+
+```text
+capper schema status
+```
+
 ## `capper secret`
 
 manage encrypted secrets
@@ -4222,6 +4325,14 @@ capper verify IMAGE.cap [flags]
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--trusted-key` | `capper.pub` | path to trusted Ed25519 public key |
+
+## `capper version`
+
+print the capper version, commit, and build info
+
+```text
+capper version
+```
 
 ## `capper volume`
 

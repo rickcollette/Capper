@@ -14,14 +14,14 @@ outputs:
 
 > Generated from `internal/api` route registrations by `make docs-api`. Do not edit by hand.
 
-All routes are under `/api/v1` and require [authentication](overview.md) unless listed as public there. Responses use the [standard envelope](overview.md#response-envelope). This deployment registers **427** routes across **64** groups.
+All routes are under `/api/v1` and require [authentication](overview.md) unless listed as public there. Responses use the [standard envelope](overview.md#response-envelope). This deployment registers **440** routes across **65** groups.
 
 ## Groups
 
 - [`accounts`](#accounts) — 31 routes
 - [`ai`](#ai) — 6 routes
 - [`alerts`](#alerts) — 7 routes
-- [`auth`](#auth) — 3 routes
+- [`auth`](#auth) — 5 routes
 - [`autoscale`](#autoscale) — 5 routes
 - [`backup-policies`](#backup-policies) — 3 routes
 - [`backups`](#backups) — 3 routes
@@ -47,7 +47,7 @@ All routes are under `/api/v1` and require [authentication](overview.md) unless 
 - [`iam`](#iam) — 16 routes
 - [`images`](#images) — 11 routes
 - [`ingress`](#ingress) — 3 routes
-- [`instances`](#instances) — 16 routes
+- [`instances`](#instances) — 17 routes
 - [`ip-pools`](#ip-pools) — 4 routes
 - [`ips`](#ips) — 6 routes
 - [`join-tokens`](#join-tokens) — 3 routes
@@ -79,6 +79,7 @@ All routes are under `/api/v1` and require [authentication](overview.md) unless 
 - [`stacks`](#stacks) — 5 routes
 - [`storage`](#storage) — 14 routes
 - [`topology`](#topology) — 2 routes
+- [`users`](#users) — 10 routes
 - [`version`](#version) — 1 routes
 - [`vpcs`](#vpcs) — 25 routes
 - [`zones`](#zones) — 10 routes
@@ -146,6 +147,8 @@ All routes are under `/api/v1` and require [authentication](overview.md) unless 
 
 | Method | Path |
 | --- | --- |
+| `GET` | `/api/v1/auth/google/callback` |
+| `POST` | `/api/v1/auth/login` |
 | `DELETE` | `/api/v1/auth/session` |
 | `GET` | `/api/v1/auth/session` |
 | `POST` | `/api/v1/auth/session` |
@@ -432,6 +435,7 @@ All routes are under `/api/v1` and require [authentication](overview.md) unless 
 | `POST` | `/api/v1/instances` |
 | `DELETE` | `/api/v1/instances/{id}` |
 | `GET` | `/api/v1/instances/{id}` |
+| `PATCH` | `/api/v1/instances/{id}` |
 | `GET` | `/api/v1/instances/{id}/events` |
 | `GET` | `/api/v1/instances/{id}/logs` |
 | `GET` | `/api/v1/instances/{id}/logs/stderr` |
@@ -778,6 +782,21 @@ All routes are under `/api/v1` and require [authentication](overview.md) unless 
 | --- | --- |
 | `GET` | `/api/v1/topology/health` |
 | `POST` | `/api/v1/topology/health` |
+
+## users
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/api/v1/users` |
+| `POST` | `/api/v1/users` |
+| `GET` | `/api/v1/users/me` |
+| `PATCH` | `/api/v1/users/me` |
+| `POST` | `/api/v1/users/me/password` |
+| `POST` | `/api/v1/users/{id}/approve` |
+| `POST` | `/api/v1/users/{id}/disable` |
+| `POST` | `/api/v1/users/{id}/password` |
+| `POST` | `/api/v1/users/{id}/roles` |
+| `DELETE` | `/api/v1/users/{id}/roles/{role}` |
 
 ## version
 

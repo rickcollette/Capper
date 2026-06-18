@@ -12,7 +12,7 @@ CAPPERWEB_DIR := /home/megalith/CapperWeb
         capper-run capper-run-stop capper-run-status \
         setcap setup capdb capdb-fetch capdb-clean test-capdb build-capdb \
         docs docs-md docs-web docs-pdf docs-serve docs-check docs-clean docs-inventory \
-        docs-gen docs-cli docs-api
+        docs-gen docs-cli docs-api git-push
 
 # CapDB lives in its own repository (https://github.com/rickcollette/CapDB). It is
 # checked out into ./CapDB (git-ignored) by `make capdb-fetch`, which clones or
@@ -189,3 +189,17 @@ docs-serve:
 
 docs-clean:
 	rm -rf docs/dist
+
+# ── Push helper ───────────────────────────────────────────────────────────────
+
+# Regenerate the source-derived CLI/API reference, commit it if it changed, then
+# push. This keeps the CI "docs" check green (it fails when capper.md/routes.md
+# are out of date relative to the code).
+git-push: docs-gen
+	@git add docs/src/reference/cli/capper.md docs/src/reference/api/routes.md
+	@if git diff --cached --quiet -- docs/src/reference; then \
+	  echo "docs reference already up to date"; \
+	else \
+	  git commit -m "docs: regenerate CLI/API reference"; \
+	fi
+	git push
