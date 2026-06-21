@@ -168,10 +168,10 @@ func (s *Server) asyncDelete(jobID, resourceType, resourceID string) {
 		return
 	}
 
-	// Mark job as started
-	now := time.Now()
-	job.StartedAt = &now
-	job.Status = "running"
+	// Mark job as started (persist to database)
+	if err := s.ctrl.Store.DeletionJobs.UpdateStarted(jobID); err != nil {
+		slog.Error("failed to mark job as started", "jobId", jobID, "error", err)
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -247,38 +247,59 @@ func (s *Server) asyncDeleteVPC(jobID, vpcID string) error {
 		"validate",
 		"delete-instances",
 		"delete-load-balancers",
-		"delete-nat-gateways",
-		"delete-internet-gateways",
-		"delete-subnets",
-		"delete-security-groups",
 		"delete-vpc",
 	}
 
-	totalSteps := len(steps)
-
 	// Step 1: Validate
-	s.ctrl.Store.DeletionJobs.UpdateProgress(jobID, steps[0], []string{}, steps[1:], 5)
-	vpc, err := s.netSvc().GetVPC(s.project, vpcID)
+	s.ctrl.Store.DeletionJobs.UpdateProgress(jobID, steps[0], []string{}, steps[1:], 10)
+	vpc, err := s.ctrl.Store.VPC.GetVPC(vpcID, s.project)
 	if err != nil {
 		return s.addDeletionError(jobID, steps[0], "vpc", vpcID, "vpc not found", false, "Check VPC ID")
 	}
 
-	// Steps 2+: Delete children in order
-	// TODO: Implement actual cascade deletion for each resource type.
-	// For now, placeholder implementation.
+	// Step 2: Delete instances in this VPC
+	s.ctrl.Store.DeletionJobs.UpdateProgress(jobID, steps[1], []string{steps[0]}, steps[2:], 30)
+	instances, _ := s.ctrl.Instances.List()
+	for _, inst := range instances {
+		// Check if instance belongs to this VPC
+		if inst.VPCID == vpcID {
+			if _, _, err := s.ctrl.Instances.Stop(inst.ID, 5*time.Second, true); err != nil {
+				slog.Warn("failed to stop instance during vpc deletion", "instance", inst.ID, "error", err)
+			}
+			if err := s.ctrl.Instances.Remove(inst.ID); err != nil {
+				return s.addDeletionError(jobID, steps[1], "instance", inst.ID, fmt.Sprintf("cannot remove: %v", err), true, "Check instance state")
+			}
+			slog.Info("deleted instance during vpc deletion", "jobId", jobID, "instance", inst.ID, "vpc", vpcID)
+		}
+	}
 
-	for i, step := range steps[1:] {
-		completed := steps[:i+1]
-		remaining := steps[i+2:]
-		progressPercent := int(float64(i+1) / float64(totalSteps) * 100)
+	// Step 3: Delete load balancers attached to this VPC
+	s.ctrl.Store.DeletionJobs.UpdateProgress(jobID, steps[2], []string{steps[0], steps[1]}, steps[3:], 60)
+	lbs, _ := s.ctrl.Store.LB.List(s.project)
+	for _, lb := range lbs {
+		// Check if LB is attached to this VPC
+		if lb.VPCID == vpcID {
+			if err := s.ctrl.Store.LB.Delete(lb.ID, s.project); err != nil {
+				return s.addDeletionError(jobID, steps[2], "load-balancer", lb.ID, fmt.Sprintf("cannot delete: %v", err), true, "Check load balancer state")
+			}
+			slog.Info("deleted load balancer during vpc deletion", "jobId", jobID, "lb", lb.ID, "vpc", vpcID)
+		}
+	}
 
-		s.ctrl.Store.DeletionJobs.UpdateProgress(jobID, step, completed, remaining, progressPercent)
+	// Step 4: Delete the VPC (cascades all remaining children via store.DeleteVPC)
+	s.ctrl.Store.DeletionJobs.UpdateProgress(jobID, steps[3], []string{steps[0], steps[1], steps[2]}, []string{}, 90)
+	if err := s.ctrl.Store.VPC.DeleteVPC(vpcID, s.project); err != nil {
+		return s.addDeletionError(jobID, steps[3], "vpc", vpcID, fmt.Sprintf("cannot delete: %v", err), false, "Check VPC state")
+	}
 
-		// TODO: Execute actual deletion for this step
-		slog.Info("executing deletion step", "jobId", jobID, "step", step, "vpc", vpcID)
+	// Also delete from topology.vpcs table (VPCs are stored in both places)
+	if err := s.ctrl.Store.Topology.Store().DeleteVPC(s.project, vpc.Slug); err != nil {
+		slog.Warn("failed to delete vpc from topology", "vpc", vpcID, "error", err)
+		// Continue anyway; the main vpc deletion succeeded
 	}
 
 	s.recordDeletionEvent("vpc", vpc.ID, "vpc.deleted", nil)
+	slog.Info("deletion completed", "jobId", jobID, "resourceType", "vpc", "resourceId", vpcID)
 	return nil
 }
 
@@ -299,6 +320,13 @@ func (s *Server) asyncDeleteLoadBalancer(jobID, lbID string) error {
 
 	// Step 3: Delete LB
 	s.ctrl.Store.DeletionJobs.UpdateProgress(jobID, steps[2], []string{steps[0], steps[1]}, []string{}, 80)
+
+	// Release routable IP if allocated
+	if err := s.lbVIPPlacer().ReleaseVIP(lb); err != nil {
+		slog.Warn("failed to release vip during lb deletion", "lb", lbID, "error", err)
+		// Continue anyway; main deletion will proceed
+	}
+
 	if err := s.ctrl.Store.LB.Delete(lbID, ""); err != nil {
 		return s.addDeletionError(jobID, steps[2], "load-balancer", lbID, fmt.Sprintf("deletion failed: %v", err), false, "Check load balancer state")
 	}

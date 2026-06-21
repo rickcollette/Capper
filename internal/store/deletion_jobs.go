@@ -131,6 +131,16 @@ func (s *DeletionJobStore) Get(jobID string) (*types.DeletionJob, error) {
 	return &job, nil
 }
 
+// UpdateStarted marks the job as started.
+func (s *DeletionJobStore) UpdateStarted(jobID string) error {
+	_, err := s.db.Exec(`
+		UPDATE deletion_jobs
+		SET status = 'running', started_at = ?
+		WHERE id = ?
+	`, time.Now().Format(time.RFC3339), jobID)
+	return err
+}
+
 // UpdateProgress updates the job's progress and current step.
 func (s *DeletionJobStore) UpdateProgress(jobID, currentStep string, completed, remaining []string, percent int) error {
 	completedJSON, _ := json.Marshal(completed)
@@ -172,7 +182,7 @@ func (s *DeletionJobStore) Complete(jobID string, success bool) error {
 		UPDATE deletion_jobs
 		SET status = ?, progress = 100, completed_at = ?
 		WHERE id = ?
-	`, status, time.Now(), jobID)
+	`, status, time.Now().Format(time.RFC3339), jobID)
 	return err
 }
 
