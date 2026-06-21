@@ -64,14 +64,19 @@ func (s *DeletionJobStore) Get(jobID string) (*types.DeletionJob, error) {
 	var job types.DeletionJob
 	var stepsJSON, completedJSON, errorsJSON sql.NullString
 	var createdAtStr, startedAtStr, completedAtStr, expiresAtStr sql.NullString
+	var statusStr sql.NullString
 
 	err := row.Scan(
-		&job.ID, &job.Status, &job.ResourceType, &job.ResourceID, &job.ConfirmationToken,
+		&job.ID, &statusStr, &job.ResourceType, &job.ResourceID, &job.ConfirmationToken,
 		&job.Progress, &job.CurrentStep, &stepsJSON, &completedJSON, &errorsJSON,
 		&createdAtStr, &startedAtStr, &completedAtStr, &expiresAtStr,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+
+	if statusStr.Valid {
+		job.Status = statusStr.String
 	}
 
 	// Parse timestamps
@@ -92,15 +97,23 @@ func (s *DeletionJobStore) Get(jobID string) (*types.DeletionJob, error) {
 		job.ExpiresAt = t
 	}
 
-	// Unmarshal JSON arrays
+	// Unmarshal JSON arrays (with defaults if NULL)
 	if stepsJSON.Valid {
 		_ = json.Unmarshal([]byte(stepsJSON.String), &job.Steps)
+	} else {
+		job.Steps = []string{}
 	}
+
 	if completedJSON.Valid {
 		_ = json.Unmarshal([]byte(completedJSON.String), &job.CompletedSteps)
+	} else {
+		job.CompletedSteps = []string{}
 	}
+
 	if errorsJSON.Valid {
 		_ = json.Unmarshal([]byte(errorsJSON.String), &job.Errors)
+	} else {
+		job.Errors = []types.DeletionJobError{}
 	}
 
 	// Compute remaining steps
