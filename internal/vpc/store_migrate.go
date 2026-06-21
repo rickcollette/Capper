@@ -138,39 +138,6 @@ func MigrateSchema(db *sql.DB) error {
 			status        TEXT NOT NULL DEFAULT 'active',
 			created_at    TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS capvpc_instance_metadata_options (
-			instance_id  TEXT PRIMARY KEY,
-			http_tokens  TEXT NOT NULL DEFAULT 'optional',
-			http_endpoint TEXT NOT NULL DEFAULT 'enabled',
-			hop_limit    INTEGER NOT NULL DEFAULT 1
-		)`,
-		`CREATE TABLE IF NOT EXISTS capvpc_instance_block_devices (
-			id          TEXT PRIMARY KEY,
-			instance_id TEXT NOT NULL,
-			device_name TEXT NOT NULL,
-			volume_id   TEXT NOT NULL DEFAULT '',
-			size_bytes  INTEGER NOT NULL DEFAULT 0,
-			delete_on_termination INTEGER NOT NULL DEFAULT 1
-		)`,
-		`CREATE TABLE IF NOT EXISTS lb_target_groups (
-			id          TEXT PRIMARY KEY,
-			name        TEXT NOT NULL,
-			project     TEXT NOT NULL DEFAULT 'default',
-			vpc_id      TEXT NOT NULL DEFAULT '',
-			protocol    TEXT NOT NULL DEFAULT 'tcp',
-			port        INTEGER NOT NULL DEFAULT 80,
-			health_path TEXT NOT NULL DEFAULT '/',
-			created_at  TEXT NOT NULL,
-			UNIQUE(name, project)
-		)`,
-		`CREATE TABLE IF NOT EXISTS lb_listeners (
-			id              TEXT PRIMARY KEY,
-			load_balancer_id TEXT NOT NULL,
-			target_group_id  TEXT NOT NULL,
-			protocol         TEXT NOT NULL DEFAULT 'tcp',
-			port             INTEGER NOT NULL DEFAULT 80,
-			created_at       TEXT NOT NULL
-		)`,
 		`CREATE TABLE IF NOT EXISTS dns_zone_vpc_assoc (
 			zone_id TEXT NOT NULL,
 			vpc_id  TEXT NOT NULL,
