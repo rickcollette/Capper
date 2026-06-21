@@ -46,3 +46,11 @@ deploy/oauth2.env
 # AlmaLinux image build artifacts
 /examples/alma/rootfs/
 /examples/alma/downloads/
+
+# Rocky Linux image build artifacts
+/examples/rockylinux/rootfs/
+/examples/rockylinux/downloads/
+
+# Ubuntu Linux image build artifacts
+/examples/ubuntu/rootfs/
+/examples/ubuntu/downloads/

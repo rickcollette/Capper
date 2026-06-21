@@ -26,7 +26,8 @@
 #   ACME_EMAIL     Let's Encrypt contact    (default rcollet@gmail.com)
 #   ACME_STAGING   1 = LE staging (testing) (default 0 = production cert)
 #   BACKEND        capper db backend        (default capdb)
-#   VERSION        release version          (default from ./VERSION)
+#   VERSION        release version          (default: auto-bump patch in ./VERSION)
+#   BUMP_VERSION   1 = bump patch before build (default); 0 = use VERSION as-is
 #   SKIP_BUILD     1 = reuse existing tgz   (default 0)
 #   SKIP_TESTS     1 = skip build test gate (passed through to build-aio.sh)
 set -euo pipefail
@@ -45,8 +46,17 @@ ACME_EMAIL="${ACME_EMAIL:-rcollet@gmail.com}"
 ACME_STAGING="${ACME_STAGING:-0}"
 BACKEND="${BACKEND:-capdb}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
+BUMP_VERSION="${BUMP_VERSION:-1}"
 
-# Google SSO: load OAuth client creds from a gitignored secrets file (or env).
+# ── Version ───────────────────────────────────────────────────────────────────
+# Auto-increment patch on each deploy build unless VERSION is preset or bump disabled.
+if [ -z "${VERSION:-}" ]; then
+  if [ "$SKIP_BUILD" = "1" ] || [ "$BUMP_VERSION" = "0" ]; then
+    if [ -f VERSION ]; then VERSION="$(tr -d ' \n\r' < VERSION)"; else VERSION="0.0.0-$(date +%Y%m%d)"; fi
+  else
+    VERSION="$(scripts/bump-version.sh patch)"
+  fi
+fi
 # When both id+secret are present, oauth2-proxy gates the site to ALLOWED_DOMAINS.
 OAUTH_ENV_FILE="${OAUTH_ENV_FILE:-$HERE/oauth2.env}"
 if [ -f "$OAUTH_ENV_FILE" ]; then
@@ -61,10 +71,6 @@ ALLOWED_DOMAINS="${ALLOWED_DOMAINS:-impenetrix.com,inipi.org}"
 BOOTSTRAP_ADMIN="${BOOTSTRAP_ADMIN:-}"
 SSO_ENABLED=0
 [ -n "$OAUTH2_CLIENT_ID" ] && [ -n "$OAUTH2_CLIENT_SECRET" ] && SSO_ENABLED=1
-
-if [ -z "${VERSION:-}" ]; then
-  if [ -f VERSION ]; then VERSION="$(tr -d ' \n' < VERSION)"; else VERSION="0.0.0-$(date +%Y%m%d)"; fi
-fi
 
 PKG="capper-aio-${VERSION}-linux-amd64"
 TGZ="DIST/AIO/${PKG}.tgz"
@@ -140,6 +146,9 @@ if [ "$SKIP_BUILD" = "1" ]; then
   [ -f "$TGZ" ] || die "no prebuilt tarball at $TGZ"
 else
   say "Building AIO bundle (CapDB + capper + console) via scripts/build-aio.sh"
+  if [ "$BUMP_VERSION" = "1" ]; then
+    ok "VERSION -> $VERSION (patch bump)"
+  fi
   SKIP_TESTS="${SKIP_TESTS:-0}" scripts/build-aio.sh "$VERSION"
 fi
 [ -f "$TGZ" ] || die "expected tarball missing: $TGZ"

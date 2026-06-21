@@ -10,6 +10,7 @@
 #   CAPPERWEB_DIR  CapperWeb checkout for the console (default /home/megalith/CapperWeb)
 #   SKIP_WEB=1     skip the npm console build (ships no console/)
 #   SKIP_TESTS=1   skip the test gate (build + package only; not recommended)
+#   BUMP_VERSION=1 when no VERSION arg: auto-increment patch in ./VERSION (default 1)
 set -euo pipefail
 
 # ── Locations ─────────────────────────────────────────────────────────────────
@@ -17,12 +18,19 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
 
 CAPDB_DIR="${CAPDB_DIR:-CapDB}"
-CAPPERWEB_DIR="${CAPPERWEB_DIR:-/home/megalith/CapperWeb}"
+CAPPERWEB_DIR="${CAPPERWEB_DIR:-/home/megalith/CapperVM/CapperWeb}"
 BUILD_CAPDB="$ROOT/build/capdb"
 
 VERSION="${1:-}"
 if [ -z "$VERSION" ]; then
-  if [ -f VERSION ]; then VERSION="$(tr -d ' \n' < VERSION)"; else VERSION="0.0.0-$(date +%Y%m%d)"; fi
+  if [ "${BUMP_VERSION:-1}" = "1" ]; then
+    VERSION="$(scripts/bump-version.sh patch)"
+    echo "Bumped VERSION -> $VERSION"
+  elif [ -f VERSION ]; then
+    VERSION="$(tr -d ' \n\r' < VERSION)"
+  else
+    VERSION="0.0.0-$(date +%Y%m%d)"
+  fi
 fi
 
 PKG="capper-aio-${VERSION}-linux-amd64"
@@ -138,8 +146,10 @@ else
   if command -v docker >/dev/null 2>&1; then
     build_sample_image alpine
     build_sample_image alma
+    build_sample_image ubuntu
+    build_sample_image rockylinux
   else
-    echo "warning: docker not found — skipping alpine.cap and alma.cap sample images" >&2
+    echo "warning: docker not found — skipping sample images" >&2
   fi
 fi
 

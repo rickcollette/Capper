@@ -152,7 +152,16 @@ func (c *conn) err(rc C.int) error {
 	if int(rc) == netBusy {
 		return fmt.Errorf("capdb: %s: %w", errmsg(c.h), driver.ErrBadConn)
 	}
-	return fmt.Errorf("capdb: %s (rc=%d)", errmsg(c.h), int(rc))
+	msg := errmsg(c.h)
+	if msg == "" {
+		switch int(rc) {
+		case 19:
+			msg = "UNIQUE constraint failed"
+		case 787:
+			msg = "FOREIGN KEY constraint failed"
+		}
+	}
+	return fmt.Errorf("capdb: %s (rc=%d)", msg, int(rc))
 }
 
 func (c *conn) Close() error {

@@ -3,7 +3,7 @@ title: "Quickstart"
 description: "Run a capsule, then bring up the control plane and Web console."
 owner: "docs"
 status: "stable"
-reviewed: "2026-06-12"
+reviewed: "2026-06-19"
 outputs:
   - markdown
   - web
@@ -86,6 +86,18 @@ capper aio down
 Add `--backend capdb` to `aio init` to provision the
 [networked CapDB backend](../operator-guide/capdb-backend.md) instead of embedded
 SQLite (requires a `-tags capdb` build).
+
+### First-boot networking and storage
+
+AIO deploy (`deploy/deploy.sh`) and `remote-setup.sh` automatically create:
+
+- VPC `default-vpc` with subnet `default` (`10.88.1.0/24`)
+- A directory-backed **default storage pool** for instance and volume disks
+
+Before launching instances on a manual install, configure these via
+**Network → VPCs** and **Admin → Storage**. See
+[Manage VPCs](../operator-guide/manage-networks.md) and
+[Admin section](../operator-guide/admin-section.md).
 
 ## Join a worker node
 

@@ -64,7 +64,7 @@ func (m InstanceManager) setupInstanceDisk(instID, instDir string, diskBytes int
 		}
 	}
 	if poolID == "" {
-		return diskquota.SetupOverlay(instDir, diskBytes)
+		return fmt.Errorf("no default storage pool configured: register one under Admin → Storage")
 	}
 	hs := hoststorage.NewManager(m.Store.HostStorage)
 	alloc, err := hs.Allocate(hoststorage.AllocateOptions{
@@ -103,19 +103,9 @@ func (m InstanceManager) Run(imageName string, resources types.ResourceOverrides
 		return nil, err
 	}
 
-	// Universal metadata reachability: the metadata service (169.254.169.254) is
-	// routed to instances via a network gateway, so every instance needs a
-	// network. When the caller requests none, attach the "default" network if it
-	// exists, so a plain instance can still reach metadata (capinit, hostname).
-	if opts.Network == nil && m.Store.Networks != nil {
-		if n, nerr := m.Store.Networks.Get("default", project); nerr == nil && n.Bridge != "" {
-			opts.Network = &NetworkRunOpts{
-				NetworkID: n.ID,
-				Bridge:    n.Bridge,
-				Subnet:    n.Subnet,
-				Gateway:   n.Gateway,
-			}
-		}
+	// Every instance must launch into a VPC subnet for metadata reachability.
+	if opts.Network == nil {
+		return nil, fmt.Errorf("subnet is required: instances must launch into a VPC subnet")
 	}
 
 	loaded, cleanup, err := m.Loader.Load(imageName)
@@ -337,6 +327,11 @@ func (m InstanceManager) Remove(ref string) error {
 	}
 	if err := m.Refresh(inst); err != nil {
 		return err
+	}
+	// Re-check termination protection to catch TOCTOU race where protection was
+	// disabled between the handler's check and now.
+	if inst.TerminationProtection {
+		return fmt.Errorf("instance has termination protection enabled")
 	}
 	if inst.Status == types.StatusRunning {
 		return fmt.Errorf("cannot remove running instance: stop it first")

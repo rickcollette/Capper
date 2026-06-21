@@ -17,8 +17,9 @@ import (
 	"capper/internal/hoststorage"
 	"capper/internal/manager"
 	"capper/internal/metadata"
-	"capper/internal/network"
+	"capper/internal/networking"
 	"capper/internal/runtime"
+	"capper/internal/storagepolicy"
 	"capper/internal/store"
 	"capper/internal/systemlabels"
 	"capper/internal/topology"
@@ -29,7 +30,16 @@ type createInstanceRequest struct {
 	Image           string            `json:"image"`
 	Name            string            `json:"name,omitempty"`
 	InstanceType    string            `json:"instanceType,omitempty"`
-	Network         string            `json:"network,omitempty"`
+	Network         string            `json:"network,omitempty"` // legacy
+	VPCID           string            `json:"vpcId,omitempty"`
+	SubnetID        string            `json:"subnetId,omitempty"`
+	SecurityGroupIDs []string         `json:"securityGroupIds,omitempty"`
+	KeyName         string            `json:"keyName,omitempty"`
+	PrivateIPAddress string           `json:"privateIpAddress,omitempty"`
+	PublicIPBehavior string          `json:"publicIpBehavior,omitempty"` // none, auto, existing-allocation, new-allocation
+	TerminationProtection *bool       `json:"terminationProtection,omitempty"`
+	ShutdownBehavior string           `json:"shutdownBehavior,omitempty"`
+	Tags            map[string]string `json:"tags,omitempty"`
 	Labels          map[string]string `json:"labels,omitempty"`
 	Env             map[string]string `json:"env,omitempty"`
 	CapInitTemplate string            `json:"capInitTemplate,omitempty"`
@@ -40,7 +50,9 @@ type createInstanceRequest struct {
 	// DiskBytes overrides the instance type's root-disk size. When a default
 	// instance storage pool is configured the disk is drawn from it, so the
 	// request must fit the pool's available capacity.
-	DiskBytes int64 `json:"diskBytes,omitempty"`
+	DiskBytes             int64  `json:"diskBytes,omitempty"`
+	LaunchTemplateID      string `json:"launchTemplateId,omitempty"`
+	LaunchTemplateVersion int    `json:"launchTemplateVersion,omitempty"`
 }
 
 type placementRequest struct {
@@ -60,6 +72,17 @@ type volumeAttach struct {
 	Type       string `json:"type,omitempty"`       // "csd" for shared volumes; empty = classic storage
 	AccessMode string `json:"accessMode,omitempty"` // "rw" (default) or "ro"
 	Required   bool   `json:"required,omitempty"`   // fail instance creation if mount fails
+}
+
+// resourceLimitsRequest uses pointers to distinguish between "not set" (nil) and
+// "set to 0" (zero value), allowing clients to reset limits by passing 0 explicitly.
+type resourceLimitsRequest struct {
+	MemoryBytes   *int64 `json:"memoryBytes,omitempty"`
+	DiskBytes     *int64 `json:"diskBytes,omitempty"`
+	CPUCount      *int64 `json:"cpuCount,omitempty"`
+	CPUTimeSecs   *int64 `json:"cpuTimeSecs,omitempty"`
+	MaxProcesses  *int64 `json:"maxProcesses,omitempty"`
+	FileSizeBytes *int64 `json:"fileSizeBytes,omitempty"`
 }
 
 func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +136,7 @@ func (s *Server) handlePatchInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Resources     *types.ResourceLimits `json:"resources"`
+		Resources     *resourceLimitsRequest `json:"resources"`
 		RestartPolicy *string               `json:"restartPolicy"`
 		Labels        map[string]string     `json:"labels"`
 	}
@@ -122,23 +145,25 @@ func (s *Server) handlePatchInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Resources != nil {
-		if req.Resources.MemoryBytes > 0 {
-			inst.Resources.MemoryBytes = req.Resources.MemoryBytes
+		// Use pointers to distinguish between "not set" (nil) and "set to 0".
+		// This allows clients to reset limits by passing 0 explicitly.
+		if req.Resources.MemoryBytes != nil && *req.Resources.MemoryBytes > 0 {
+			inst.Resources.MemoryBytes = *req.Resources.MemoryBytes
 		}
-		if req.Resources.DiskBytes > 0 {
-			inst.Resources.DiskBytes = req.Resources.DiskBytes
+		if req.Resources.DiskBytes != nil {
+			inst.Resources.DiskBytes = *req.Resources.DiskBytes
 		}
-		if req.Resources.CPUCount > 0 {
-			inst.Resources.CPUCount = req.Resources.CPUCount
+		if req.Resources.CPUCount != nil && *req.Resources.CPUCount > 0 {
+			inst.Resources.CPUCount = *req.Resources.CPUCount
 		}
-		if req.Resources.CPUTimeSecs > 0 {
-			inst.Resources.CPUTimeSecs = req.Resources.CPUTimeSecs
+		if req.Resources.CPUTimeSecs != nil && *req.Resources.CPUTimeSecs > 0 {
+			inst.Resources.CPUTimeSecs = *req.Resources.CPUTimeSecs
 		}
-		if req.Resources.MaxProcesses > 0 {
-			inst.Resources.MaxProcesses = req.Resources.MaxProcesses
+		if req.Resources.MaxProcesses != nil && *req.Resources.MaxProcesses > 0 {
+			inst.Resources.MaxProcesses = *req.Resources.MaxProcesses
 		}
-		if req.Resources.FileSizeBytes > 0 {
-			inst.Resources.FileSizeBytes = req.Resources.FileSizeBytes
+		if req.Resources.FileSizeBytes != nil && *req.Resources.FileSizeBytes > 0 {
+			inst.Resources.FileSizeBytes = *req.Resources.FileSizeBytes
 		}
 	}
 	if req.RestartPolicy != nil {
@@ -154,7 +179,10 @@ func (s *Server) handlePatchInstance(w http.ResponseWriter, r *http.Request) {
 	// Live-apply memory/pids to a running instance via its cgroup; cpu-time and
 	// file-size rlimits require a restart.
 	liveApplied := false
-	needsRestart := req.Resources != nil && (req.Resources.CPUTimeSecs > 0 || req.Resources.FileSizeBytes > 0 || req.Resources.DiskBytes > 0)
+	needsRestart := req.Resources != nil && (
+		(req.Resources.CPUTimeSecs != nil && *req.Resources.CPUTimeSecs > 0) ||
+		(req.Resources.FileSizeBytes != nil && *req.Resources.FileSizeBytes > 0) ||
+		(req.Resources.DiskBytes != nil && *req.Resources.DiskBytes > 0))
 	if inst.Status == types.StatusRunning {
 		if cgm := cgroup.Open(inst.ID); cgm != nil {
 			_ = cgm.Apply(inst.Resources)
@@ -179,8 +207,25 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, err)
 		return
 	}
+	if err := mergeLaunchTemplateIntoRequest(s, s.project, &req); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
 	if req.Image == "" {
 		writeBadRequest(w, fmt.Errorf("image is required"))
+		return
+	}
+
+	if req.Network != "" {
+		writeBadRequest(w, fmt.Errorf("network field is removed; use subnetId"))
+		return
+	}
+	if req.SubnetID == "" {
+		writeBadRequest(w, fmt.Errorf("subnetId is required"))
+		return
+	}
+	if _, err := storagepolicy.RequireDefaultPool(s.ctrl.Store.AdminConfig, s.ctrl.Store.HostStorage); err != nil {
+		writeBadRequest(w, err)
 		return
 	}
 
@@ -190,8 +235,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional root-disk size override, validated against the instance storage
-	// pool when one is configured.
+	// Optional root-disk size override, validated against the instance storage pool.
 	if req.DiskBytes > 0 {
 		if err := s.validateInstanceDiskSize(req.DiskBytes); err != nil {
 			writeBadRequest(w, err)
@@ -199,6 +243,11 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		}
 		resources.Limits.DiskBytes = req.DiskBytes
 		resources.DiskSet = true
+	}
+	diskBytes := resources.Limits.DiskBytes
+	if err := storagepolicy.ValidatePoolCapacity(s.ctrl.Store.AdminConfig, s.ctrl.Store.HostStorage, diskBytes); err != nil {
+		writeBadRequest(w, err)
+		return
 	}
 
 	if qerr := s.ctrl.Store.Billing.CheckQuota(s.project, "instance"); qerr != nil {
@@ -220,20 +269,28 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	req.Env["CAPPER_METADATA_URL"] = "http://169.254.169.254/capper/v1"
 	req.Env["CAPPER_METADATA_TOKEN_FILE"] = "/run/capper/metadata-token"
 	runOpts := manager.RunOptions{Name: req.Name, Labels: req.Labels, Env: req.Env}
-	if req.Network != "" {
-		netMgr := network.NewManager(s.ctrl.Store.Networks)
-		n, leases, err := netMgr.Inspect(req.Network, s.project)
-		if err != nil {
-			writeBadRequest(w, fmt.Errorf("network: %w", err))
-			return
-		}
-		_ = leases
-		runOpts.Network = &manager.NetworkRunOpts{
-			NetworkID: n.ID,
-			Bridge:    n.Bridge,
-			Subnet:    n.Subnet,
-			Gateway:   n.Gateway,
-		}
+	var primaryENI string
+	sub, serr := networking.ResolveSubnetForLaunch(s.ctrl.Store.VPC, req.SubnetID, req.VPCID)
+	if serr != nil {
+		writeBadRequest(w, fmt.Errorf("subnet: %w", serr))
+		return
+	}
+	vpcID := sub.VPCID
+	if req.VPCID != "" {
+		vpcID = req.VPCID
+	}
+	eni, eerr := s.ctrl.Store.VPC.CreateENI(vpcID, sub.ID, req.SecurityGroupIDs, req.PrivateIPAddress)
+	if eerr != nil {
+		writeBadRequest(w, fmt.Errorf("eni: %w", eerr))
+		return
+	}
+	primaryENI = eni.ID
+	runOpts.Network = &manager.NetworkRunOpts{
+		NetworkID:   sub.ID,
+		Bridge:      sub.BridgeName,
+		Subnet:      sub.CIDR,
+		Gateway:     sub.GatewayIP,
+		PreferredIP: eni.PrimaryPrivateIP,
 	}
 
 	// Resolve topology placement using the scheduler.
@@ -261,6 +318,29 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	inst.NodeID = placement.NodeID
 	inst.DesiredState = "running"
 	inst.Generation = 1
+	inst.InstanceType = req.InstanceType
+	if req.SubnetID != "" || primaryENI != "" {
+		inst.VPCID = sub.VPCID
+		inst.SubnetID = sub.ID
+		inst.PrimaryENIID = primaryENI
+		inst.PrivateIPAddress = inst.NetworkIP
+		inst.SecurityGroupIDs = req.SecurityGroupIDs
+		if primaryENI != "" {
+			_, _ = s.ctrl.Store.VPC.AttachENI(primaryENI, inst.ID, 0)
+		}
+	}
+	if req.KeyName != "" {
+		inst.KeyName = req.KeyName
+	}
+	if req.TerminationProtection != nil {
+		inst.TerminationProtection = *req.TerminationProtection
+	}
+	if req.ShutdownBehavior != "" {
+		inst.ShutdownBehavior = req.ShutdownBehavior
+	}
+	if req.Tags != nil {
+		inst.Tags = req.Tags
+	}
 	_ = s.ctrl.Store.UpdateInstance(*inst)
 
 	_ = s.ctrl.Store.Billing.RecordUsage(s.project, "instance", inst.ID, "count", 1)
@@ -311,6 +391,13 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.authorize(r, "instance:delete", "instance/"+id); err != nil {
 		writeForbidden(w, err)
+		return
+	}
+	// Check termination protection. Note: this is a racy check; the protection can
+	// be disabled between here and the Remove() call below. The Remove() method
+	// re-checks protection to catch this TOCTOU case.
+	if inst, err := s.ctrl.Store.ResolveInstance(id); err == nil && inst.TerminationProtection {
+		writeError(w, http.StatusConflict, "instance has termination protection enabled")
 		return
 	}
 	// Unmount any CSD FUSE volumes attached to this instance.
@@ -595,26 +682,7 @@ func (s *Server) validateInstanceDiskSize(diskBytes int64) error {
 	if diskBytes <= 0 {
 		return fmt.Errorf("disk size must be positive")
 	}
-	poolID := ""
-	if s.ctrl.Store.AdminConfig != nil {
-		if v, ok, _ := s.ctrl.Store.AdminConfig.Get(adminconfig.KeyDefaultInstancePool); ok {
-			poolID = v
-		}
-	}
-	if poolID == "" {
-		return nil
-	}
-	pool, err := hoststorage.NewManager(s.ctrl.Store.HostStorage).GetPool(poolID)
-	if err != nil {
-		return fmt.Errorf("instance storage pool unavailable")
-	}
-	if pool.Health == hoststorage.PoolDegraded {
-		return fmt.Errorf("instance storage pool %q is degraded", pool.Name)
-	}
-	if diskBytes > pool.AvailableBytes {
-		return fmt.Errorf("requested disk (%d bytes) exceeds available pool capacity (%d bytes)", diskBytes, pool.AvailableBytes)
-	}
-	return nil
+	return storagepolicy.ValidatePoolCapacity(s.ctrl.Store.AdminConfig, s.ctrl.Store.HostStorage, diskBytes)
 }
 
 // instanceDiskCapacity is the wizard's view of how much disk a new instance may

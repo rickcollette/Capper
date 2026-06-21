@@ -32,6 +32,7 @@ import (
 	"capper/internal/metadata"
 	"capper/internal/queue"
 	"capper/internal/network"
+	"capper/internal/networking"
 	"capper/internal/posture"
 	"capper/internal/org"
 	"capper/internal/registry"
@@ -62,8 +63,9 @@ type Store struct {
 	Projects  *org.Store
 	IAM       *iam.Manager
 	Hosts     *host.Store
-	Networks  *network.Store
-	Firewalls *firewall.Store
+	Networks    *network.Store
+	Networking  *networking.Service
+	Firewalls   *firewall.Store
 	DNS       *capperdns.Store
 	Compute   *compute.Store
 	Storage   *storage.Store
@@ -98,9 +100,10 @@ type Store struct {
 	Functions   *functions.Store
 	MCPServers  *mcpserver.Store
 	IPAM        *ipam.Store
-	AdminConfig *adminconfig.Store
-	HostStorage *hoststorage.Store
-	Fail2ban    *fail2ban.Store
+	AdminConfig   *adminconfig.Store
+	HostStorage   *hoststorage.Store
+	Fail2ban      *fail2ban.Store
+	DeletionJobs  *DeletionJobStore
 }
 
 func Open(paths Paths) (*Store, error) {
@@ -136,6 +139,27 @@ func Open(paths Paths) (*Store, error) {
 	if err := applyMigration(db, "0001_tenancy_columns", tenancyStmts); err != nil {
 		db.Close()
 		return nil, err
+	}
+
+	// Create deletion_jobs table for async resource deletion tracking.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS deletion_jobs (
+		id TEXT PRIMARY KEY,
+		status TEXT NOT NULL,
+		resource_type TEXT NOT NULL,
+		resource_id TEXT NOT NULL,
+		confirmation_token TEXT,
+		progress INTEGER DEFAULT 0,
+		current_step TEXT,
+		steps TEXT NOT NULL,
+		completed_steps TEXT NOT NULL,
+		errors TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		started_at TEXT,
+		completed_at TEXT,
+		expires_at TEXT NOT NULL,
+		UNIQUE(id)
+	)`); err != nil {
+		return nil, fmt.Errorf("store: create deletion_jobs table: %w", err)
 	}
 
 	s.Resources = resource.NewStore(db)
@@ -210,6 +234,7 @@ func Open(paths Paths) (*Store, error) {
 		return nil, err
 	}
 	s.VPC = vpc.NewManager(db)
+	s.Networking = networking.NewService(db, s.Topology.Store())
 	s.VPCMover = vpcmover.NewStore(db)
 	s.Audit = audit.NewStore(db)
 	s.Quotas = quotas.NewStore(db)
@@ -220,6 +245,7 @@ func Open(paths Paths) (*Store, error) {
 	s.AdminConfig = adminconfig.NewStore(db)
 	s.HostStorage = hoststorage.NewStore(db)
 	s.Fail2ban = fail2ban.NewStore(db)
+	s.DeletionJobs = NewDeletionJobStore(db)
 	return s, nil
 }
 
