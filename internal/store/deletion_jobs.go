@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"capper/internal/types"
@@ -20,11 +21,14 @@ func NewDeletionJobStore(db *sql.DB) *DeletionJobStore {
 
 // Create inserts a new deletion job into the store.
 func (s *DeletionJobStore) Create(job *types.DeletionJob) error {
-	stepsJSON, _ := json.Marshal(job.Steps)
+	stepsJSON, err := json.Marshal(job.Steps)
+	if err != nil {
+		return fmt.Errorf("failed to marshal steps: %w", err)
+	}
 	completedJSON, _ := json.Marshal([]string{})
 	errorsJSON, _ := json.Marshal([]types.DeletionJobError{})
 
-	_, err := s.db.Exec(`
+	result, err := s.db.Exec(`
 		INSERT INTO deletion_jobs(
 			id, status, resource_type, resource_id, confirmation_token,
 			progress, current_step, steps, completed_steps, errors,
@@ -32,10 +36,20 @@ func (s *DeletionJobStore) Create(job *types.DeletionJob) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		job.ID, job.Status, job.ResourceType, job.ResourceID, job.ConfirmationToken,
-		job.Progress, job.CurrentStep, stepsJSON, completedJSON, errorsJSON,
-		job.CreatedAt, job.ExpiresAt,
+		job.Progress, job.CurrentStep, string(stepsJSON), string(completedJSON), string(errorsJSON),
+		job.CreatedAt.Format(time.RFC3339), job.ExpiresAt.Format(time.RFC3339),
 	)
-	return err
+
+	if err != nil {
+		return fmt.Errorf("insert failed: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("no rows inserted")
+	}
+
+	return nil
 }
 
 // Get retrieves a deletion job by ID.
@@ -48,27 +62,45 @@ func (s *DeletionJobStore) Get(jobID string) (*types.DeletionJob, error) {
 	`, jobID)
 
 	var job types.DeletionJob
-	var stepsJSON, completedJSON, errorsJSON []byte
-	var startedAt, completedAt sql.NullTime
+	var stepsJSON, completedJSON, errorsJSON sql.NullString
+	var createdAtStr, startedAtStr, completedAtStr, expiresAtStr sql.NullString
 
 	err := row.Scan(
 		&job.ID, &job.Status, &job.ResourceType, &job.ResourceID, &job.ConfirmationToken,
 		&job.Progress, &job.CurrentStep, &stepsJSON, &completedJSON, &errorsJSON,
-		&job.CreatedAt, &startedAt, &completedAt, &job.ExpiresAt,
+		&createdAtStr, &startedAtStr, &completedAtStr, &expiresAtStr,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	_ = json.Unmarshal(stepsJSON, &job.Steps)
-	_ = json.Unmarshal(completedJSON, &job.CompletedSteps)
-	_ = json.Unmarshal(errorsJSON, &job.Errors)
-
-	if startedAt.Valid {
-		job.StartedAt = &startedAt.Time
+	// Parse timestamps
+	if createdAtStr.Valid {
+		t, _ := time.Parse(time.RFC3339, createdAtStr.String)
+		job.CreatedAt = t
 	}
-	if completedAt.Valid {
-		job.CompletedAt = &completedAt.Time
+	if startedAtStr.Valid {
+		t, _ := time.Parse(time.RFC3339, startedAtStr.String)
+		job.StartedAt = &t
+	}
+	if completedAtStr.Valid {
+		t, _ := time.Parse(time.RFC3339, completedAtStr.String)
+		job.CompletedAt = &t
+	}
+	if expiresAtStr.Valid {
+		t, _ := time.Parse(time.RFC3339, expiresAtStr.String)
+		job.ExpiresAt = t
+	}
+
+	// Unmarshal JSON arrays
+	if stepsJSON.Valid {
+		_ = json.Unmarshal([]byte(stepsJSON.String), &job.Steps)
+	}
+	if completedJSON.Valid {
+		_ = json.Unmarshal([]byte(completedJSON.String), &job.CompletedSteps)
+	}
+	if errorsJSON.Valid {
+		_ = json.Unmarshal([]byte(errorsJSON.String), &job.Errors)
 	}
 
 	// Compute remaining steps
