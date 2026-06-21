@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 )
 
@@ -103,8 +102,8 @@ func (s *Server) handleInstanceMetadata(w http.ResponseWriter, r *http.Request) 
 	id := r.PathValue("id")
 	meta, ok := loadInstanceMetadata(s, id)
 	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("no metadata record for instance %s", id))
-		return
+		// Return empty metadata object instead of 404; instances may not have metadata
+		meta = map[string]any{}
 	}
 	writeData(w, meta, nil)
 }
