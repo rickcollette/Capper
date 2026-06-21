@@ -211,16 +211,35 @@ for i in $(seq 1 15); do
   sleep 1
 done
 
-# Default network so every instance can reach the metadata service
-# (169.254.169.254) for capinit (hostname, etc.). Instances with no explicit
-# network auto-attach to it.
-if curl -fsS "${AUTH[@]}" "$base/networks" 2>/dev/null | grep -q '"name":"default"'; then
-  ok "default network present"
+# Default VPC + subnet so instances can reach the metadata service
+# (169.254.169.254) for capinit (hostname, etc.).
+if curl -fsS "${AUTH[@]}" "$base/vpcs" 2>/dev/null | grep -q '"slug":"default-vpc"'; then
+  ok "default vpc present"
 else
-  say "Creating default network"
-  curl -fsS "${AUTH[@]}" -X POST "$base/networks" \
-    -d '{"name":"default","subnet":"10.88.0.0/24","mode":"nat"}' >/dev/null \
-    && ok "default network created" || die "default network create failed"
+  say "Creating default VPC and subnet"
+  curl -fsS "${AUTH[@]}" -X POST "$base/vpcs" \
+    -d '{"slug":"default-vpc","name":"default","cidr":"10.88.0.0/16","status":"active"}' >/dev/null \
+    && ok "default vpc created" || die "default vpc create failed"
+  curl -fsS "${AUTH[@]}" -X POST "$base/vpcs/default-vpc/subnets" \
+    -d '{"name":"default","cidr":"10.88.1.0/24","zone":"z1"}' >/dev/null \
+    && ok "default subnet created" || die "default subnet create failed"
+fi
+
+# Default storage pool for instance and volume disks.
+STORE_ROOT="${CAPPER_STORE:-/var/lib/capper}"
+POOL_DIR="$STORE_ROOT/storage-pool"
+mkdir -p "$POOL_DIR"
+if curl -fsS "${AUTH[@]}" "$base/admin/storage/settings" 2>/dev/null | grep -q '"defaultInstancePool":"'; then
+  ok "default storage pool configured"
+else
+  say "Registering default storage pool"
+  POOL_JSON="$(curl -fsS "${AUTH[@]}" -X POST "$base/admin/storage-pools" \
+    -d "{\"name\":\"default\",\"backend\":\"directory\",\"mountpoint\":\"$POOL_DIR\",\"totalBytes\":107374182400}")"
+  POOL_ID="$(printf '%s' "$POOL_JSON" | grep -oP '"id"\s*:\s*"\K[^"]+' | head -1)"
+  [ -n "$POOL_ID" ] || die "storage pool create failed"
+  curl -fsS "${AUTH[@]}" -X PUT "$base/admin/storage/settings" \
+    -d "{\"defaultInstancePool\":\"$POOL_ID\"}" >/dev/null \
+    && ok "default storage pool configured" || die "storage settings update failed"
 fi
 
 # Seed the base images shipped in the bundle (alpine, alma, …). Always

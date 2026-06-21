@@ -1329,8 +1329,10 @@ Press Ctrl-C to stop.`,
 				}
 				d := control.NewDaemon(ctrl.Store, ctrl.Instances, dopts)
 				d.IMDS = capinit.NewServer(ctrl.Store)
+				control.WireLBCertificates(ctrl.Store, ctrl.CertMgr)
 				ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 				defer cancel()
+				control.StartCertRenewal(ctx, ctrl.CertMgr)
 				if metricsAddr != "" {
 					srv := metrics.NewPrometheusServerWithLB(metricsAddr, ctrl.Store.ListInstances, ctrl.Store.LB.RunningStats)
 					go func() {

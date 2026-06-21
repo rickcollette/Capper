@@ -3,6 +3,8 @@ package lb
 import (
 	"database/sql"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,18 +39,53 @@ func InitSchema(db *sql.DB) error {
 			address TEXT NOT NULL,
 			UNIQUE(lb_id, address)
 		)`,
+		`CREATE TABLE IF NOT EXISTS lb_target_groups (
+			id          TEXT PRIMARY KEY,
+			name        TEXT NOT NULL,
+			project     TEXT NOT NULL DEFAULT 'default',
+			vpc_id      TEXT NOT NULL DEFAULT '',
+			protocol    TEXT NOT NULL DEFAULT 'tcp',
+			port        INTEGER NOT NULL DEFAULT 80,
+			health_path TEXT NOT NULL DEFAULT '/',
+			created_at  TEXT NOT NULL,
+			UNIQUE(name, project)
+		)`,
+		`CREATE TABLE IF NOT EXISTS lb_listeners (
+			id               TEXT PRIMARY KEY,
+			load_balancer_id TEXT NOT NULL,
+			target_group_id  TEXT NOT NULL,
+			protocol         TEXT NOT NULL DEFAULT 'tcp',
+			port             INTEGER NOT NULL DEFAULT 80,
+			created_at       TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS lb_target_group_targets (
+			id              TEXT PRIMARY KEY,
+			target_group_id TEXT NOT NULL,
+			address         TEXT NOT NULL,
+			weight          INTEGER NOT NULL DEFAULT 1,
+			UNIQUE(target_group_id, address)
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
 			return err
 		}
 	}
-	// Additive migrations for existing databases.
 	for _, alter := range []string{
 		`ALTER TABLE lb_load_balancers ADD COLUMN algorithm TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE lb_load_balancers ADD COLUMN selector TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE lb_load_balancers ADD COLUMN tls_cert_name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE lb_load_balancers ADD COLUMN service_alias TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE lb_load_balancers ADD COLUMN scheme TEXT NOT NULL DEFAULT 'internal'`,
+		`ALTER TABLE lb_load_balancers ADD COLUMN type TEXT NOT NULL DEFAULT 'application'`,
+		`ALTER TABLE lb_load_balancers ADD COLUMN vpc_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE lb_load_balancers ADD COLUMN subnet_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE lb_load_balancers ADD COLUMN vip_address TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE lb_load_balancers ADD COLUMN routable_ip_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE lb_load_balancers ADD COLUMN dns_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE lb_load_balancers ADD COLUMN eni_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE lb_target_groups ADD COLUMN load_balancer_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE lb_listeners ADD COLUMN certificate_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(alter); err != nil {
 			if !isDupeCol(err) {
@@ -56,7 +93,7 @@ func InitSchema(db *sql.DB) error {
 			}
 		}
 	}
-	return nil
+	return migrateLegacyLBs(db)
 }
 
 func isDupeCol(err error) bool {
@@ -65,17 +102,25 @@ func isDupeCol(err error) bool {
 }
 
 func (s *Store) Insert(lb LoadBalancer) error {
+	subnetID := lb.SubnetID
+	if subnetID == "" {
+		subnetID = lb.NetworkID
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO lb_load_balancers
-		 (id, name, project, network_id, mode, listen_addr, status, algorithm, selector, tls_cert_name, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		lb.ID, lb.Name, lb.Project, lb.NetworkID, lb.Mode, lb.ListenAddr, lb.Status,
+		 (id, name, project, network_id, subnet_id, vpc_id, scheme, type, vip_address, routable_ip_id,
+		  eni_id, dns_name, mode, listen_addr, status, algorithm, selector, tls_cert_name, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		lb.ID, lb.Name, lb.Project, subnetID, subnetID, lb.VPCID, string(lb.Scheme), string(lb.Type),
+		lb.VIPAddress, lb.RoutableIPID, lb.ENIID, lb.DNSName, lb.Mode, lb.ListenAddr, lb.Status,
 		string(lb.Algorithm), lb.Selector, lb.TLSCertName, lb.CreatedAt,
 	)
 	return err
 }
 
-const lbCols = `id, name, project, network_id, mode, listen_addr, status, algorithm, selector, tls_cert_name, service_alias, created_at`
+const lbCols = `id, name, project, network_id, subnet_id, vpc_id, scheme, type, vip_address,
+	routable_ip_id, eni_id, dns_name, mode, listen_addr, status, algorithm, selector, tls_cert_name,
+	service_alias, created_at`
 
 func (s *Store) Get(nameOrID, project string) (LoadBalancer, error) {
 	var row *sql.Row
@@ -116,7 +161,7 @@ func (s *Store) List(project string) ([]LoadBalancer, error) {
 
 func (s *Store) ListActive() ([]LoadBalancer, error) {
 	rows, err := s.db.Query(
-		`SELECT `+lbCols+` FROM lb_load_balancers WHERE status='active' AND listen_addr != ''`,
+		`SELECT `+lbCols+` FROM lb_load_balancers WHERE status='active'`,
 	)
 	if err != nil {
 		return nil, err
@@ -143,7 +188,6 @@ func (s *Store) UpdateListenAddr(id, addr string) error {
 	return err
 }
 
-// SetMeta updates algorithm, selector, and TLS cert name for an LB.
 func (s *Store) SetMeta(id string, selector, tlsCertName string, algo LBAlgorithm) error {
 	_, err := s.db.Exec(
 		`UPDATE lb_load_balancers SET selector=?, tls_cert_name=?, algorithm=? WHERE id=?`,
@@ -157,9 +201,47 @@ func (s *Store) SetServiceAlias(id, alias string) error {
 	return err
 }
 
+func (s *Store) SetVIP(id, vip, routableIPID string) error {
+	_, err := s.db.Exec(
+		`UPDATE lb_load_balancers SET vip_address=?, routable_ip_id=? WHERE id=?`,
+		vip, routableIPID, id,
+	)
+	return err
+}
+
 func (s *Store) Delete(nameOrID, project string) error {
-	// Resolve the LB id first so its backends can be cascaded after deletion.
 	lb, gerr := s.Get(nameOrID, project)
+	if gerr != nil {
+		return fmt.Errorf("cannot find load balancer: %w", gerr)
+	}
+
+	// CASCADE DELETE: delete children first, then parent.
+	// This ensures that if any step fails, the parent is not deleted and orphans
+	// are avoided.
+
+	// Step 1: Delete load balancer backends.
+	if _, err := s.db.Exec(`DELETE FROM lb_backends WHERE lb_id=?`, lb.ID); err != nil {
+		return fmt.Errorf("cannot delete lb backends: %w", err)
+	}
+
+	// Step 2: Delete target group targets.
+	if _, err := s.db.Exec(
+		`DELETE FROM lb_target_group_targets WHERE target_group_id IN (SELECT id FROM lb_target_groups WHERE load_balancer_id=?)`,
+		lb.ID); err != nil {
+		return fmt.Errorf("cannot delete lb target group targets: %w", err)
+	}
+
+	// Step 3: Delete listeners.
+	if _, err := s.db.Exec(`DELETE FROM lb_listeners WHERE load_balancer_id=?`, lb.ID); err != nil {
+		return fmt.Errorf("cannot delete lb listeners: %w", err)
+	}
+
+	// Step 4: Delete target groups.
+	if _, err := s.db.Exec(`DELETE FROM lb_target_groups WHERE load_balancer_id=?`, lb.ID); err != nil {
+		return fmt.Errorf("cannot delete lb target groups: %w", err)
+	}
+
+	// Step 5: Finally, delete the load balancer itself.
 	var res sql.Result
 	var err error
 	if project == "" {
@@ -169,16 +251,13 @@ func (s *Store) Delete(nameOrID, project string) error {
 			nameOrID, nameOrID, project)
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot delete load balancer: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("lb %q not found", nameOrID)
 	}
-	// Cascade: remove this LB's backends so none are left orphaned.
-	if gerr == nil {
-		_, _ = s.db.Exec(`DELETE FROM lb_backends WHERE lb_id=?`, lb.ID)
-	}
+
 	return nil
 }
 
@@ -219,7 +298,7 @@ func (s *Store) ListBackends(lbID string) ([]Backend, error) {
 	var out []Backend
 	for rows.Next() {
 		var b Backend
-		b.Healthy = true // health state is live, not persisted
+		b.Healthy = true
 		if err := rows.Scan(&b.ID, &b.LBID, &b.Address); err != nil {
 			return nil, err
 		}
@@ -228,18 +307,139 @@ func (s *Store) ListBackends(lbID string) ([]Backend, error) {
 	return out, rows.Err()
 }
 
+// ListProxySpecs returns proxy configurations for all active listeners.
+func (s *Store) ListProxySpecs() ([]ProxySpec, error) {
+	active, err := s.ListActive()
+	if err != nil {
+		return nil, err
+	}
+	var specs []ProxySpec
+	for _, lb := range active {
+		listeners, err := s.ListListeners(lb.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(listeners) == 0 {
+			if lb.ListenAddr == "" {
+				continue
+			}
+			specs = append(specs, legacyProxySpec(lb))
+			continue
+		}
+		for _, lst := range listeners {
+			spec, err := s.listenerProxySpec(lb, lst)
+			if err != nil {
+				return nil, err
+			}
+			if spec.ListenAddr == "" {
+				continue
+			}
+			if spec.Mode == ModeHTTPS && spec.TLSCertName == "" {
+				continue // HTTPS requires cert before proxy starts
+			}
+			specs = append(specs, spec)
+		}
+	}
+	return specs, nil
+}
+
+func legacyProxySpec(lb LoadBalancer) ProxySpec {
+	return ProxySpec{
+		Key:           lb.ID,
+		LB:            lb,
+		ListenAddr:    lb.ListenAddr,
+		Mode:          lb.Mode,
+		TargetGroupID: "",
+		TLSCertName:   lb.TLSCertName,
+	}
+}
+
+func (s *Store) listenerProxySpec(lb LoadBalancer, lst Listener) (ProxySpec, error) {
+	mode, err := listenerMode(lst.Protocol)
+	if err != nil {
+		return ProxySpec{}, err
+	}
+	addr := formatListenAddr(lb.VIPAddress, lst.Port, lb.ListenAddr)
+	return ProxySpec{
+		Key:           lst.ID,
+		LB:            lb,
+		Listener:      lst,
+		ListenAddr:    addr,
+		Mode:          mode,
+		TargetGroupID: lst.TargetGroupID,
+		TLSCertName:   lst.CertificateID,
+	}, nil
+}
+
+func listenerMode(proto string) (LBMode, error) {
+	switch strings.ToUpper(proto) {
+	case string(ProtoHTTP):
+		return ModeHTTP, nil
+	case string(ProtoHTTPS):
+		return ModeHTTPS, nil
+	case string(ProtoTCP):
+		return ModeTCP, nil
+	default:
+		return ModeTCP, fmt.Errorf("unknown listener protocol %q", proto)
+	}
+}
+
+func formatListenAddr(vip string, port int, fallback string) string {
+	if vip != "" {
+		if strings.Contains(vip, ":") {
+			return net.JoinHostPort(vip, strconv.Itoa(port))
+		}
+		return fmt.Sprintf("%s:%d", vip, port)
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return fmt.Sprintf("0.0.0.0:%d", port)
+}
+
+func (s *Store) GetDetail(nameOrID, project string) (LBDetail, error) {
+	lb, err := s.Get(nameOrID, project)
+	if err != nil {
+		return LBDetail{}, err
+	}
+	listeners, _ := s.ListListeners(lb.ID)
+	tgs, _ := s.ListTargetGroupsForLB(lb.ID)
+	var targets []Target
+	for _, tg := range tgs {
+		tgTargets, _ := s.ListTargets(tg.ID)
+		targets = append(targets, tgTargets...)
+	}
+	backends, _ := s.ListBackends(lb.ID)
+	return LBDetail{
+		LoadBalancer: lb,
+		Listeners:    listeners,
+		TargetGroups: tgs,
+		Targets:      targets,
+		Backends:     backends,
+	}, nil
+}
+
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanLB(s rowScanner) (LoadBalancer, error) {
 	var lb LoadBalancer
-	var algo, selector, tlsCert, serviceAlias string
-	if err := s.Scan(&lb.ID, &lb.Name, &lb.Project, &lb.NetworkID, &lb.Mode,
-		&lb.ListenAddr, &lb.Status, &algo, &selector, &tlsCert, &serviceAlias, &lb.CreatedAt); err != nil {
+	var algo, selector, tlsCert, serviceAlias, scheme, lbType, subnetID string
+	if err := s.Scan(
+		&lb.ID, &lb.Name, &lb.Project, &lb.NetworkID, &subnetID, &lb.VPCID,
+		&scheme, &lbType, &lb.VIPAddress, &lb.RoutableIPID, &lb.ENIID, &lb.DNSName,
+		&lb.Mode, &lb.ListenAddr, &lb.Status, &algo, &selector, &tlsCert, &serviceAlias, &lb.CreatedAt,
+	); err != nil {
 		if err == sql.ErrNoRows {
 			return LoadBalancer{}, fmt.Errorf("lb not found")
 		}
 		return LoadBalancer{}, fmt.Errorf("lb: scan: %w", err)
 	}
+	lb.SubnetID = subnetID
+	if lb.NetworkID == "" {
+		lb.NetworkID = subnetID
+	}
+	lb.Scheme = LBScheme(scheme)
+	lb.Type = LBType(lbType)
 	lb.Algorithm = LBAlgorithm(algo)
 	lb.Selector = selector
 	lb.TLSCertName = tlsCert
@@ -249,4 +449,16 @@ func scanLB(s rowScanner) (LoadBalancer, error) {
 
 func newID() string {
 	return "lb_" + fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+func newTGID() string {
+	return "tg_" + fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+func newLstID() string {
+	return "lst_" + fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+func newTgtID() string {
+	return "tgt_" + fmt.Sprintf("%d", time.Now().UnixNano())
 }

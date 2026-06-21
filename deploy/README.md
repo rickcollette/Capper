@@ -55,7 +55,8 @@ directly.
 | `ACME_EMAIL` | `rcollet@gmail.com` | Let's Encrypt contact |
 | `ACME_STAGING` | `0` | `1` = LE staging (untrusted, for testing rate limits) |
 | `BACKEND` | `capdb` | capper db backend |
-| `VERSION` | from `./VERSION` | release version |
+| `VERSION` | auto-bump patch in `./VERSION` | release version stamped into binaries + console |
+| `BUMP_VERSION` | `1` | set `0` to deploy/build without incrementing `./VERSION` |
 | `SKIP_BUILD` | `0` | `1` = reuse an existing `DIST/AIO/*.tgz` |
 | `SKIP_TESTS` | `0` | `1` = skip the build-time test gate |
 
