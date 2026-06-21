@@ -28,16 +28,44 @@ func (s *Server) handleDeleteResourcePreflight(w http.ResponseWriter, r *http.Re
 	}
 	token := hex.EncodeToString(tokenBytes)
 
-	// TODO: Build resource-specific deletion plan based on resourceType.
-	// For now, return a generic plan showing all steps.
+	// Build resource-specific deletion order based on resource type
+	deleteOrder := []string{}
+	switch resourceType {
+	case "instance":
+		deleteOrder = []string{
+			resourceID + " (stop)",
+			resourceID + " (detach-eni)",
+			resourceID + " (delete)",
+		}
+	case "vpc":
+		deleteOrder = []string{
+			"subnets",
+			"network-acls",
+			"route-tables",
+			"internet-gateways",
+			resourceID + " (vpc)",
+		}
+	case "database":
+		deleteOrder = []string{
+			resourceID + " (backup)",
+			resourceID + " (delete)",
+		}
+	case "load-balancer":
+		deleteOrder = []string{
+			"target-groups",
+			"listeners",
+			resourceID + " (load-balancer)",
+		}
+	default:
+		deleteOrder = []string{resourceID}
+	}
+
 	plan := map[string]any{
 		"resourceType":         resourceType,
 		"resourceId":           resourceID,
 		"confirmationToken":    token,
 		"requiresConfirmation": true,
-		"deleteOrder": []string{
-			"step1", "step2", "step3", // placeholder; actual order depends on resource type
-		},
+		"deleteOrder":          deleteOrder,
 		"message": "Use the confirmationToken to proceed with deletion. " +
 			"Confirmation requires typing DELETE in uppercase.",
 	}
@@ -91,8 +119,17 @@ func (s *Server) handleDeleteResourceConfirm(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := s.ctrl.Store.DeletionJobs.Create(job); err != nil {
+		slog.Error("failed to create deletion job", "jobId", jobID, "error", err)
 		writeInternal(w, fmt.Errorf("failed to create deletion job: %w", err))
 		return
+	}
+
+	slog.Info("deletion job created", "jobId", jobID, "resourceType", resourceType, "resourceId", resourceID)
+
+	// Verify job was saved (for debugging)
+	_, verifyErr := s.ctrl.Store.DeletionJobs.Get(jobID)
+	if verifyErr != nil {
+		slog.Warn("created job not immediately retrievable", "jobId", jobID, "error", verifyErr)
 	}
 
 	// Start async deletion in background
