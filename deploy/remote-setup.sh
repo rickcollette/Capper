@@ -247,10 +247,14 @@ fi
 for cap in "$REMOTE_TMP/$PKG"/*.cap; do
   [ -f "$cap" ] || continue
   nm="$(basename "$cap" .cap)"
-  say "Uploading base image ($nm)"
-  curl -fsS -H "Authorization: Bearer ${CAPPER_BEARER}" \
-    -F file=@"$cap" -F name="$nm" "$base/images/upload" >/dev/null \
-    && ok "image '$nm' registered" || die "image upload failed: $nm"
+  say "Uploading base image ($nm) from $cap"
+  if curl -fsSL -H "Authorization: Bearer ${CAPPER_BEARER}" \
+    -F file=@"$cap" -F name="$nm" "$base/images/upload" 2>&1; then
+    ok "image '$nm' registered"
+  else
+    # Fallback: directly copy image to images directory (if API not available)
+    sudo cp "$cap" /var/lib/capper/images/ && ok "image '$nm' copied directly" || die "image upload/copy failed: $nm"
+  fi
 done
 
 # ──────────────────────────────────────────────────────────────────────────────
