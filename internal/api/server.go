@@ -840,6 +840,28 @@ func (s *Server) routes() {
 		s.handleDeleteResourceConfirm)
 	s.mux.HandleFunc("GET /api/v1/deletion-jobs/{jobId}", s.handleGetDeletionJob)
 
+	// CapStart recipe and provisioning
+	s.mux.HandleFunc("GET /api/v1/capstart/recipes", s.handleListRecipes)
+	s.mux.HandleFunc("POST /api/v1/capstart/recipes", s.handleCreateRecipe)
+	s.mux.HandleFunc("GET /api/v1/capstart/recipes/{id}", s.handleGetRecipe)
+	s.mux.HandleFunc("PUT /api/v1/capstart/recipes/{id}", s.handleUpdateRecipe)
+	s.mux.HandleFunc("DELETE /api/v1/capstart/recipes/{id}", s.handleDeleteRecipe)
+	s.mux.HandleFunc("POST /api/v1/capstart/recipes/{id}/validate", s.handleValidateRecipe)
+	s.mux.HandleFunc("POST /api/v1/capstart/recipes/{id}/create-vm", s.handleCreateVMFromRecipe)
+	s.mux.HandleFunc("GET /api/v1/capstart/recipes/builtin", s.handleListBuiltinRecipes)
+
+	// CapStart ISO management
+	s.mux.HandleFunc("GET /api/v1/capstart/isos", s.handleListISOs)
+	s.mux.HandleFunc("POST /api/v1/capstart/isos", s.handleUploadISO)
+	s.mux.HandleFunc("GET /api/v1/capstart/isos/{id}", s.handleGetISO)
+	s.mux.HandleFunc("DELETE /api/v1/capstart/isos/{id}", s.handleDeleteISO)
+	s.mux.HandleFunc("POST /api/v1/capstart/isos/{id}/verify", s.handleVerifyISO)
+
+	// CapStart OS installation tracking
+	s.mux.HandleFunc("POST /api/v1/capstart/install", s.handleStartInstallation)
+	s.mux.HandleFunc("GET /api/v1/capstart/install/{jobId}", s.handleGetInstallationStatus)
+	s.mux.HandleFunc("POST /api/v1/capstart/install/{jobId}/cancel", s.handleCancelInstallation)
+
 	// Certificate Manager routes
 	s.certRoutes()
 
