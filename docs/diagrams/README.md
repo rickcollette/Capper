@@ -27,8 +27,8 @@ Visual representations of Capper workflows showing API endpoint coverage and imp
 
 1. **View Individual Workflows**: Click on any diagram file to see a specific workflow
 2. **Reference Implementation Status**: Green endpoints are safe to use; red indicates missing frontend UI
-3. **Plan Features**: Use as reference when planning frontend feature additions (see PLAN.md)
-4. **Identify Gaps**: Red items in PASS3.md correspond to red nodes in these diagrams
+3. **Plan Features**: Use as reference when planning frontend feature additions (see ../project/PLAN.md)
+4. **Identify Gaps**: Red items in ../project/PASS3.md correspond to red nodes in these diagrams
 
 ## Overall Coverage
 
@@ -38,11 +38,11 @@ Visual representations of Capper workflows showing API endpoint coverage and imp
 
 ## References
 
-- See [PASS1.md](../PASS1.md) for complete backend API reference
-- See [PASS2.md](../PASS2.md) for complete frontend API calls
-- See [PASS3.md](../PASS3.md) for detailed gap analysis
-- See [PLAN.md](../PLAN.md) for implementation roadmap
-- See [FUNCTIONS.md](../FUNCTIONS.md) for all diagrams in one file
+- See [PASS1.md](../project/PASS1.md) for complete backend API reference
+- See [PASS2.md](../project/PASS2.md) for complete frontend API calls
+- See [PASS3.md](../project/PASS3.md) for detailed gap analysis
+- See [PLAN.md](../project/PLAN.md) for implementation roadmap
+- See [FUNCTIONS.md](../project/FUNCTIONS.md) for all diagrams in one file
 
 ---
 

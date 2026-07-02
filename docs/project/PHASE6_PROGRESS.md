@@ -23,7 +23,7 @@ Phase 6 foundation work is **complete**. All architectural planning, design docu
 ## Deliverables Completed
 
 ### 1. Architecture Documentation ✅
-**File**: `CAPSTART_ARCHITECTURE.md` (19KB)
+**File**: `docs/capstart/CAPSTART_ARCHITECTURE.md` (19KB)
 
 **Contents**:
 - High-level system architecture diagram
@@ -43,7 +43,7 @@ Phase 6 foundation work is **complete**. All architectural planning, design docu
 ---
 
 ### 2. Recipe Schema Specification ✅
-**File**: `RECIPE_SCHEMA.md` (24KB)
+**File**: `docs/capstart/RECIPE_SCHEMA.md` (24KB)
 
 **Contents**:
 - Complete YAML schema with all top-level fields
@@ -290,8 +290,8 @@ internal/api/server.go         (+27 routes) - Registered CapStart endpoints
 
 ### Documentation
 ```
-CAPSTART_ARCHITECTURE.md       (19KB) - Technical architecture
-RECIPE_SCHEMA.md               (24KB) - Recipe format spec
+docs/capstart/CAPSTART_ARCHITECTURE.md       (19KB) - Technical architecture
+docs/capstart/RECIPE_SCHEMA.md               (24KB) - Recipe format spec
 ```
 
 ---

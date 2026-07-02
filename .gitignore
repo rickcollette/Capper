@@ -5,6 +5,21 @@
 /dist/
 /tmp/
 *.cap
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# Local AI assistant config, prompts, and generated handoff notes.
+/.claude/
+/.codex/
+/.cursor/
+/.aider*/
+CLAUDE.md
+AGENTS.md
+
+# Local archived working notes; source documentation belongs under docs/.
+/ARCHIVED/
 
 # Stray build binaries left at the repo root (use bin/ instead).
 /capper

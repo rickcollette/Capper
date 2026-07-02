@@ -243,8 +243,9 @@ else
 fi
 
 # Seed the base images shipped in the bundle (alpine, alma, …). Always
-# (re)upload so image updates ship; upsert by name.
-for cap in "$REMOTE_TMP/$PKG"/*.cap; do
+# (re)upload so image updates ship; upsert by name. New bundles place these
+# under images/; the top-level glob keeps older bundles compatible.
+for cap in "$REMOTE_TMP/$PKG"/images/*.cap "$REMOTE_TMP/$PKG"/*.cap; do
   [ -f "$cap" ] || continue
   nm="$(basename "$cap" .cap)"
   say "Uploading base image ($nm) from $cap"

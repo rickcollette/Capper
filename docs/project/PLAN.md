@@ -134,12 +134,12 @@ Complete frontend implementation for all major CapperVM subsystems, closing 250+
 
 ---
 
-## Part 2: CapStart Integration (UPCOMING)
+## Part 2: CapStart Integration (IN PROGRESS)
 
 ### Overview
 Integrate CapStart as core infrastructure-as-code platform, enabling recipe-driven VM provisioning similar to ProxMox LXE templates.
 
-**Status**: 📋 Planned (Starting Week 19)  
+**Status**: 🟡 Foundation implemented; orchestration workflows still pending
 **Duration**: Weeks 19-30 (12 weeks)  
 **Target Completion**: 2026-09-30
 
@@ -152,16 +152,16 @@ Design architecture and create core recipe system infrastructure
 
 ### 6.1 Architecture & Design
 **Tasks**:
-- [ ] Design recipe schema & format
-- [ ] Create API contract specifications
-- [ ] Design database schema
+- [x] Design recipe schema & format
+- [x] Create API contract specifications
+- [x] Design database schema
 - [ ] Document integration points
 - [ ] Create architecture documentation
 
 **Deliverables**:
-- CAPSTART_ARCHITECTURE.md
-- RECIPE_SCHEMA.md
-- Database migrations
+- docs/capstart/CAPSTART_ARCHITECTURE.md
+- docs/capstart/RECIPE_SCHEMA.md
+- Database migrations / store schema
 - API design document
 
 **Complexity**: ⭐⭐ Medium  
@@ -203,11 +203,11 @@ Implement recipe storage, validation, and built-in recipe library
 
 ### 7.1 Recipe Storage & Validation
 **Tasks**:
-- [ ] Implement recipe CRUD operations
-- [ ] Create recipe parser & validator
+- [x] Implement recipe CRUD operations
+- [x] Create recipe parser & validator
 - [ ] Implement recipe versioning
 - [ ] Add dependency resolution
-- [ ] Create recipe storage layer
+- [x] Create recipe storage layer
 
 **Complexity**: ⭐⭐ Medium  
 **Effort**: 40 hours
@@ -260,17 +260,17 @@ Create user interface for recipe browsing, management, and uploads
 ### 8.1 Recipe Management UI
 **Components to Create**:
 
-1. **RecipeBrowser.tsx**
+1. **RecipeBrowser.tsx** ✅
    - List all recipes with search/filter
    - View recipe details & requirements
    - Quick action buttons
 
-2. **RecipeDetail.tsx**
+2. **RecipeDetail.tsx** ✅
    - Full recipe information display
    - Configuration preview
    - Create VM button
 
-3. **RecipeUpload.tsx**
+3. **RecipeUpload.tsx** ✅
    - Custom recipe file upload
    - Validation feedback
    - Metadata configuration
@@ -280,7 +280,7 @@ Create user interface for recipe browsing, management, and uploads
    - Filter by category
    - View documentation
 
-5. **API Clients**:
+5. **API Clients**: ✅
    - `capstart-recipes.ts` - Recipe management
    - `capstart-isos.ts` - ISO management
 
@@ -295,7 +295,7 @@ Create user interface for recipe browsing, management, and uploads
    - Progress tracking
    - File validation
 
-2. **ISOManagement.tsx**
+2. **ISOManagement.tsx** ✅
    - List uploaded ISOs
    - View details & metadata
    - Delete/verify operations
@@ -326,8 +326,8 @@ Implement complete workflows for recipe-based VM creation and ISO installation
 7. VM ready for use
 
 **Components**:
-- RecipeVMWizard.tsx (multi-step wizard)
-- CreationProgress.tsx (real-time tracking)
+- RecipeVMWizard.tsx (multi-step wizard) ✅
+- CreationProgress.tsx (real-time tracking) ✅
 - Wizard state management
 - Dynamic configuration forms
 
@@ -651,6 +651,310 @@ Comprehensive testing, documentation, and production launch preparation
 
 ## Next Steps
 
+## Binary TGZ Release Packaging Plan
+
+### Goal
+Ship Capper as an x86_64 binary `.tgz` release that contains everything Capper
+owns directly, plus an interactive `install.sh` that installs host prerequisites
+and guides the operator through first boot.
+
+The release must support:
+
+- Ubuntu 18.04
+- Debian 12
+- Ubuntu 24.04
+- Rocky Linux CURRENT (resolved and pinned at release time; current public Rocky
+  release is 10.2 as of 2026-07-01)
+- RHEL 9
+
+### Release Strategy
+
+Build one release family per runtime ABI instead of pretending one binary fits
+all hosts. Capper's pure-Go binaries can be portable, but the CapDB-enabled
+control plane and `capdb-server` link through cgo and OpenSSL, so the supported
+artifact boundary is the distro/runtime ABI.
+
+Artifact names:
+
+```text
+capper-aio-<version>-ubuntu18.04-glibc2.27-x86_64.tgz
+capper-aio-<version>-debian12-glibc2.36-x86_64.tgz
+capper-aio-<version>-ubuntu24.04-glibc2.39-x86_64.tgz
+capper-aio-<version>-rocky<resolved>-glibc<detected>-x86_64.tgz
+capper-aio-<version>-rhel9-glibc2.34-x86_64.tgz
+```
+
+Also publish:
+
+- `<artifact>.sha256`
+- `<artifact>.sig` once signing is wired in
+- `manifest.json` describing OS ID, OS version, glibc, OpenSSL ABI, build image
+  digest, git commit, CapDB commit, CapperWeb commit, and included sample images
+- `channels.json` with per-platform URLs and checksums
+
+### Bundle Contents
+
+Each `.tgz` should extract to a single directory:
+
+```text
+capper-aio-<version>-<platform>/
+  install.sh
+  VERSION
+  manifest.json
+  README.md
+  bin/
+    capper
+    capper-agent
+    capinit
+    capdb-server
+  console/
+    ...CapperWeb dist...
+  images/
+    alpine.cap
+    ubuntu.cap
+    rockylinux.cap
+    alma.cap
+  systemd/
+    capdb-server.service
+    capper-control.service
+    capper-agent.service
+  scripts/
+    doctor.sh
+    uninstall.sh
+    collect-support-bundle.sh
+```
+
+Keep the install layout compatible with the current AIO upgrade path:
+
+```text
+/usr/local/lib/capper/<version>/
+/usr/local/lib/capper/current -> <version>
+/usr/local/bin/capper -> /usr/local/lib/capper/current/bin/capper
+/opt/capper/console -> /usr/local/lib/capper/current/console
+/var/lib/capper
+/etc/capper
+```
+
+### Dockerized Build Matrix
+
+Add a release builder that runs inside target OS containers. The host should only
+need Docker/BuildKit; all compiler, Go, Node, CMake, OpenSSL, CapDB, and packaging
+dependencies are installed inside the container image.
+
+Planned files:
+
+```text
+packaging/
+  matrix.yml
+  Dockerfile.release
+  entrypoint-build.sh
+  install-deps.sh
+  smoke-test.sh
+scripts/
+  release-matrix.sh
+  build-aio-platform.sh
+```
+
+Matrix entries:
+
+```yaml
+targets:
+  ubuntu18.04:
+    image: ubuntu:18.04
+    package_manager: apt
+    glibc: "2.27"
+    openssl_family: "1.1"
+  debian12:
+    image: debian:12
+    package_manager: apt
+    glibc: "2.36"
+    openssl_family: "3"
+  ubuntu24.04:
+    image: ubuntu:24.04
+    package_manager: apt
+    glibc: "2.39"
+    openssl_family: "3"
+  rocky-current:
+    image: rockylinux:10
+    package_manager: dnf
+    glibc: "detect"
+    openssl_family: "detect"
+  rhel9:
+    image: registry.access.redhat.com/ubi9/ubi
+    package_manager: dnf
+    glibc: "2.34"
+    openssl_family: "3"
+```
+
+Release command:
+
+```bash
+scripts/release-matrix.sh 0.2.0
+```
+
+Expected flow per target:
+
+1. Build/rebuild the target builder image with a pinned base image digest.
+2. Mount the Capper repo read-only except for `DIST/`, `build/`, `bin/`, and
+   the project-local `./CapDB` checkout created by `make capdb-fetch`.
+3. Build CapDB inside the target container.
+4. Build `capper` with `-tags capdb` and target-local cgo/OpenSSL.
+5. Build `capper-agent` and `capinit` with `CGO_ENABLED=0`.
+6. Build CapperWeb with `VITE_PROFILE=aio` and stamp `VITE_CAPPER_VERSION`.
+7. Build or import sample `.cap` images.
+8. Run `ldd` against every dynamically linked binary and record the result.
+9. Package the platform `.tgz`, checksum, and manifest.
+
+### Installer Contract
+
+`install.sh` must be interactive by default and scriptable with flags:
+
+```bash
+sudo ./install.sh
+sudo ./install.sh --yes --backend capdb --listen 0.0.0.0:8080
+sudo ./install.sh --skip-docker --skip-compose
+sudo ./install.sh --offline-deps /path/to/deps
+```
+
+Installer responsibilities:
+
+1. Detect OS using `/etc/os-release`, architecture with `uname -m`, glibc with
+   `getconf GNU_LIBC_VERSION`, and OpenSSL runtime with `ldconfig -p`.
+2. Refuse unsupported OS/ABI combinations with a clear message naming the
+   matching bundle.
+3. Install required host packages through `apt-get` or `dnf`.
+4. Install Docker Engine and the Docker Compose plugin.
+5. Enable and start Docker, then verify `docker version` and
+   `docker compose version`.
+6. Install Capper into the versioned layout.
+7. Install systemd units and drop-ins.
+8. Run `capper aio doctor`.
+9. Offer to run `capper aio init --backend capdb`.
+10. Offer to start services with `capper aio up`.
+11. Print the console URL, service status, and support-bundle command.
+
+Required package groups:
+
+- Common: `ca-certificates`, `curl`, `tar`, `gzip`, `python3`, `openssl`,
+  `iproute2`/`iproute`, `iptables`/`nftables`, `libcap`, `lvm2`, `systemd`,
+  `shadow-utils`/`passwd`
+- Runtime isolation: `bubblewrap`, `crun` or `runc`
+- Storage/network diagnostics: `jq`, `util-linux`, `e2fsprogs`, `xfsprogs`
+- Optional edge stack: `nginx`, `certbot`
+- Docker: Docker Engine, Docker CLI, containerd, buildx plugin, compose plugin
+
+Package mapping belongs in code, not prose, so the installer can keep distro
+differences explicit:
+
+```text
+packaging/deps/apt.env
+packaging/deps/dnf.env
+packaging/deps/docker-apt.sh
+packaging/deps/docker-dnf.sh
+```
+
+### Docker Installation Policy
+
+Default to vendor-supported Docker repositories where available, with an
+operator prompt before adding external package repositories. Provide an explicit
+fallback to distro-packaged Docker/Podman-compatible tooling when the OS is old
+or the vendor repository no longer supports it.
+
+Ubuntu 18.04 needs special handling because its base repositories and Docker
+support are aging. The installer should:
+
+- detect whether `bionic` package repositories are reachable
+- prefer a pinned, tested Docker version if the current Docker repo no longer
+  supports 18.04
+- emit a hard warning that this target is compatibility support, not the
+  preferred production baseline
+
+### Validation Gates
+
+Per build target:
+
+- `go build ./...`
+- `go vet ./...`
+- `go test ./...`
+- `make test-capdb`
+- CapDB-backed store smoke test
+- `ldd bin/capper bin/capdb-server` captured into `manifest.json`
+- `install.sh --check-only` inside a clean container or VM for that OS
+- service smoke in a privileged VM where systemd, cgroups, networking, and Docker
+  are real enough to validate runtime behavior
+- CapperWeb `scripts/build.sh` for the included console
+
+Do not declare a platform supported from a container compile alone. Containers
+are the build boundary; VMs are the install/runtime verification boundary.
+
+### Implementation Phases
+
+#### Phase A: Normalize Existing AIO Packaging
+- [ ] Split `scripts/build-aio.sh` into reusable build and package functions.
+- [x] Move platform-specific assumptions out of comments and README text.
+- [x] Add `manifest.json` generation.
+- [x] Move sample images under `images/` in the bundle.
+- [x] Keep the existing Ubuntu 24.04 artifact working during the refactor.
+
+#### Phase B: Add Dockerized Platform Builders
+- [x] Add `packaging/matrix.yml`.
+- [x] Add `packaging/Dockerfile.release`.
+- [x] Add `scripts/release-matrix.sh`.
+- [x] Add `scripts/build-aio-platform.sh`.
+- [ ] Verify Ubuntu 24.04 first, then Debian 12, RHEL 9/UBI 9, Rocky current,
+      and Ubuntu 18.04 last.
+
+#### Phase C: Replace Installer With Cross-Distro Guided Install
+- [x] Add OS/ABI detection.
+- [x] Add apt/dnf dependency installers.
+- [x] Add Docker Engine + Compose plugin installation.
+- [x] Add non-interactive flags for CI and remote deploy.
+- [x] Add `--check-only` and `--doctor-only` modes.
+- [x] Preserve current atomic symlink upgrade behavior.
+
+#### Phase D: Runtime Smoke Infrastructure
+- [ ] Add VM smoke harness per distro.
+- [ ] Validate systemd unit install and restart.
+- [ ] Validate `capper aio init --backend capdb`.
+- [ ] Validate Docker and Compose availability.
+- [ ] Validate API health and console asset serving.
+- [ ] Validate sample image import/launch path where kernel/cgroup support allows.
+
+#### Phase E: Release Publishing
+- [ ] Publish artifacts, checksums, and manifests.
+- [ ] Generate platform-aware `channels.json`.
+- [ ] Teach `capper aio upgrade --channel` to select by OS/ABI when needed.
+- [ ] Add release notes that state exact tested OS versions and glibc/OpenSSL
+      ABIs.
+
+### Key Risks
+
+- Ubuntu 18.04 may require old OpenSSL/Docker handling and should not dictate the
+  dependency floor for modern platforms.
+- Rocky `CURRENT` is a moving target; resolve it to an explicit major/minor and
+  base image digest at release time.
+- RHEL 9 builds should use UBI 9 for public CI, but final support should be
+  tested on a real registered RHEL 9 VM.
+- Container builds prove ABI compatibility, but Capper's runtime needs systemd,
+  cgroups, network namespaces, firewall tooling, and Docker, so VM smoke tests
+  are mandatory.
+- CapDB must only be fetched into this repo's `./CapDB` via `make capdb-fetch`;
+  never use `/home/megalith/CapperVM/CapDB`.
+
+### Definition of Done
+
+- `scripts/release-matrix.sh <version>` produces all target `.tgz` files,
+  checksums, and manifests.
+- Each artifact installs successfully on its matching clean VM.
+- `docker version` and `docker compose version` pass after guided install.
+- `capper aio doctor`, `capper aio init --backend capdb`, `capper aio up`, and
+  `/api/v1/health` pass on every supported target.
+- The console is served from the bundled CapperWeb build.
+- Upgrade from the previous AIO tarball still works through the versioned
+  symlink layout.
+- Documentation names the exact OS versions, glibc versions, OpenSSL ABI, and
+  Docker install behavior for every artifact.
+
 ### Immediate (Complete)
 - ✅ Phase 1-5 frontend implementation
 - ✅ Create planning documents
@@ -675,6 +979,8 @@ Comprehensive testing, documentation, and production launch preparation
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-07-01 | Frontend implementation complete, CapStart plan added |
+| 1.1 | 2026-07-01 | Added binary TGZ release packaging and cross-distro installer plan |
+| 1.2 | 2026-07-01 | Updated CapStart and packaging status after persistent backend/API and release matrix scaffolding |
 
 ---
 
@@ -696,9 +1002,9 @@ Comprehensive testing, documentation, and production launch preparation
 
 ### Must-Have Features
 - ✅ (Phase 1-5) Core VM management
-- [ ] (Phase 6-11) Recipe system
+- [x] (Phase 6-11) Recipe system foundation
 - [ ] (Phase 6-11) ISO installation
-- [ ] (Phase 6-11) Built-in recipes
+- [x] (Phase 6-11) Built-in recipes foundation
 
 ### Should-Have Features
 - [ ] (Phase 10) Recipe customization
@@ -715,5 +1021,5 @@ Comprehensive testing, documentation, and production launch preparation
 
 **Document Status**: Comprehensive Plan Complete  
 **Phase 1-5 Status**: ✅ COMPLETE  
-**Phase 6-11 Status**: 📋 READY TO START  
+**Phase 6-11 Status**: 🟡 IN PROGRESS
 **Overall Project Status**: On Track
