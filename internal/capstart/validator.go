@@ -60,6 +60,7 @@ func ValidateRecipe(recipe *Recipe) ValidationResult {
 
 	// Validate version format (semantic versioning)
 	if recipe.Version != "" && !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$`).MatchString(recipe.Version) {
+		result.Valid = false
 		result.Warnings = append(result.Warnings, ValidationWarning{
 			Field:   "version",
 			Message: "Version should follow semantic versioning (e.g., 1.0.0)",
@@ -214,7 +215,7 @@ func validateHook(hook *map[string]interface{}, section string, index int, resul
 	// Validate script content exists for script-type hooks
 	if hookType, ok := (*hook)["type"].(string); ok && hookType == "script" {
 		script, hasScript := (*hook)["script"].(string)
-		scriptFile, hasScriptFile := (*hook)["script_file"].(string)
+		_, hasScriptFile := (*hook)["script_file"].(string)
 
 		if !hasScript && !hasScriptFile {
 			result.Errors = append(result.Errors, ValidationError{

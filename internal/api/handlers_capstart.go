@@ -1,54 +1,57 @@
 package api
 
 import (
-	"database/sql"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
 	"capper/internal/capstart"
 )
 
-// GET /api/v1/capstart/recipes
 func (s *Server) handleListRecipes(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:list", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	// TODO: Implement database query to list recipes
-	// For now, return empty list
-	writeData(w, []capstart.Recipe{}, nil)
+	var builtin *bool
+	if v := r.URL.Query().Get("isBuiltin"); v != "" {
+		b := v == "true" || v == "1"
+		builtin = &b
+	}
+	recipes, err := s.ctrl.Store.CapStartRecipes.ListRecipes(
+		r.URL.Query().Get("category"),
+		builtin,
+		queryInt(r, "offset", 0),
+		queryInt(r, "limit", 200),
+	)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	writeData(w, recipes, nil)
 }
 
-// POST /api/v1/capstart/recipes
 func (s *Server) handleCreateRecipe(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:create", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
 	var req capstart.CreateRecipeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBadRequest(w, err)
 		return
 	}
-
-	// Validate required fields
-	if req.Name == "" || req.Version == "" || req.Title == "" || req.Description == "" {
-		writeBadRequest(w, errors.New("name, version, title, and description are required"))
-		return
-	}
-
-	// TODO: Validate recipe content
-	// TODO: Calculate checksum
-	// TODO: Store in database
-	// TODO: Optionally store recipe file in S3
-
 	recipe := capstart.Recipe{
-		ID:          uuid.New().String(),
 		Name:        req.Name,
 		Version:     req.Version,
 		Title:       req.Title,
@@ -58,414 +61,493 @@ func (s *Server) handleCreateRecipe(w http.ResponseWriter, r *http.Request) {
 		Content:     req.Content,
 		IsBuiltin:   false,
 		IsCommunity: false,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
 	}
-
-	// TODO: Save to database
-
+	if result := capstart.ValidateRecipe(&recipe); !result.Valid {
+		writeJSON(w, http.StatusBadRequest, Envelope{Data: result, Error: "recipe validation failed"})
+		return
+	}
+	if err := s.ctrl.Store.CapStartRecipes.CreateRecipe(&recipe); err != nil {
+		writeInternal(w, err)
+		return
+	}
 	s.recordEvent(r, "recipe", recipe.ID, "capstart.recipe.created", map[string]any{
-		"name":    req.Name,
-		"version": req.Version,
+		"name": recipe.Name, "version": recipe.Version,
 	})
-
 	writeJSON(w, http.StatusCreated, Envelope{Data: recipe})
 }
 
-// GET /api/v1/capstart/recipes/{id}
 func (s *Server) handleGetRecipe(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:read", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	recipeID := r.PathValue("id")
-	if recipeID == "" {
-		writeBadRequest(w, errors.New("recipe ID is required"))
+	recipe, err := s.ctrl.Store.CapStartRecipes.GetRecipe(r.PathValue("id"))
+	if err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
-	// TODO: Query database for recipe
-	// For now, return 404
-	writeJSON(w, http.StatusNotFound, Envelope{Error: "recipe not found"})
+	writeData(w, recipe, nil)
 }
 
-// PUT /api/v1/capstart/recipes/{id}
 func (s *Server) handleUpdateRecipe(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:update", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	recipeID := r.PathValue("id")
-	if recipeID == "" {
-		writeBadRequest(w, errors.New("recipe ID is required"))
+	recipe, err := s.ctrl.Store.CapStartRecipes.GetRecipe(r.PathValue("id"))
+	if err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
 	var req struct {
-		Title       string   `json:"title,omitempty"`
-		Description string   `json:"description,omitempty"`
-		Category    string   `json:"category,omitempty"`
-		Tags        []string `json:"tags,omitempty"`
+		Title       *string         `json:"title,omitempty"`
+		Description *string         `json:"description,omitempty"`
+		Category    *string         `json:"category,omitempty"`
+		Tags        []string        `json:"tags,omitempty"`
+		Schema      json.RawMessage `json:"schema,omitempty"`
+		Content     json.RawMessage `json:"content,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBadRequest(w, err)
 		return
 	}
-
-	// TODO: Update recipe in database
-	// TODO: Validate changes
-
-	s.recordEvent(r, "recipe", recipeID, "capstart.recipe.updated", nil)
-	w.WriteHeader(http.StatusNoContent)
+	if req.Title != nil {
+		recipe.Title = *req.Title
+	}
+	if req.Description != nil {
+		recipe.Description = *req.Description
+	}
+	if req.Category != nil {
+		recipe.Category = *req.Category
+	}
+	if req.Tags != nil {
+		recipe.Tags = req.Tags
+	}
+	if len(req.Schema) > 0 {
+		recipe.Schema = req.Schema
+	}
+	if len(req.Content) > 0 {
+		recipe.Content = req.Content
+	}
+	if result := capstart.ValidateRecipe(recipe); !result.Valid {
+		writeJSON(w, http.StatusBadRequest, Envelope{Data: result, Error: "recipe validation failed"})
+		return
+	}
+	if err := s.ctrl.Store.CapStartRecipes.UpdateRecipe(recipe); err != nil {
+		writeCapStartError(w, err)
+		return
+	}
+	s.recordEvent(r, "recipe", recipe.ID, "capstart.recipe.updated", nil)
+	writeData(w, recipe, nil)
 }
 
-// DELETE /api/v1/capstart/recipes/{id}
 func (s *Server) handleDeleteRecipe(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:delete", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	recipeID := r.PathValue("id")
-	if recipeID == "" {
-		writeBadRequest(w, errors.New("recipe ID is required"))
+	id := r.PathValue("id")
+	if err := s.ctrl.Store.CapStartRecipes.DeleteRecipe(id); err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
-	// TODO: Check if recipe is in use (running VMs)
-	// TODO: Delete recipe from database
-	// TODO: Delete recipe file from storage
-
-	s.recordEvent(r, "recipe", recipeID, "capstart.recipe.deleted", nil)
+	s.recordEvent(r, "recipe", id, "capstart.recipe.deleted", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST /api/v1/capstart/recipes/{id}/validate
 func (s *Server) handleValidateRecipe(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:read", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	recipeID := r.PathValue("id")
-	if recipeID == "" {
-		writeBadRequest(w, errors.New("recipe ID is required"))
+	recipe, err := s.ctrl.Store.CapStartRecipes.GetRecipe(r.PathValue("id"))
+	if err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
-	// TODO: Fetch recipe from database
-	// TODO: Run validator
-	// TODO: Return validation result
-
-	result := capstart.ValidationResult{
-		Valid:    true,
-		Errors:   []capstart.ValidationError{},
-		Warnings: []capstart.ValidationWarning{},
-		Metadata: capstart.RecipeMetadata{
-			CPUMin:            1,
-			CPURecommended:    2,
-			MemoryMin:         512,
-			MemoryRecommended: 1024,
-			DiskMin:           5000,
-			DiskRecommended:   10000,
-		},
-	}
-
-	writeData(w, result, nil)
+	writeData(w, capstart.ValidateRecipe(recipe), nil)
 }
 
-// GET /api/v1/capstart/isos
 func (s *Server) handleListISOs(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:list", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	// TODO: Query database for ISOs
-	writeData(w, []capstart.ISO{}, nil)
+	isos, err := s.ctrl.Store.CapStartISOs.ListISOs(
+		r.URL.Query().Get("osType"),
+		queryInt(r, "offset", 0),
+		queryInt(r, "limit", 200),
+	)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	writeData(w, isos, nil)
 }
 
-// POST /api/v1/capstart/isos
 func (s *Server) handleUploadISO(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:create", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	// Check if this is a URL-based ISO or file upload
 	contentType := r.Header.Get("Content-Type")
-	if contentType == "application/json" {
-		// URL-based ISO
-		var req capstart.UploadISORequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeBadRequest(w, err)
-			return
-		}
-
-		// TODO: Validate ISO URL
-		// TODO: Verify URL is accessible
-		// TODO: Store ISO metadata in database
-
-		iso := capstart.ISO{
-			ID:          uuid.New().String(),
-			Name:        req.Name,
-			Version:     req.Version,
-			OSType:      req.OSType,
-			Architecture: req.Architecture,
-			Checksum:    req.Checksum,
-			ChecksumType: req.ChecksumType,
-			URL:         req.URL,
-			IsVerified:  false,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-		}
-
-		s.recordEvent(r, "iso", iso.ID, "capstart.iso.created", map[string]any{
-			"name": req.Name,
-			"url":  req.URL,
-		})
-
-		writeJSON(w, http.StatusCreated, Envelope{Data: iso})
+	if strings.HasPrefix(contentType, "application/json") {
+		s.handleRegisterISOURL(w, r)
 		return
 	}
-
-	// File upload ISO
-	// TODO: Handle multipart file upload
-	// TODO: Verify file is ISO
-	// TODO: Store in S3/filesystem
-	// TODO: Calculate checksum
-	// TODO: Store ISO metadata in database
-
-	writeJSON(w, http.StatusInternalServerError, Envelope{Error: "file upload not yet implemented"})
+	s.handleUploadISOFile(w, r)
 }
 
-// GET /api/v1/capstart/isos/{id}
+func (s *Server) handleRegisterISOURL(w http.ResponseWriter, r *http.Request) {
+	var req capstart.UploadISORequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeBadRequest(w, err)
+		return
+	}
+	if req.Name == "" || req.URL == nil || *req.URL == "" {
+		writeBadRequest(w, errors.New("name and url are required"))
+		return
+	}
+	iso := capstart.ISO{
+		Name:         req.Name,
+		Version:      req.Version,
+		OSType:       req.OSType,
+		Architecture: req.Architecture,
+		Checksum:     req.Checksum,
+		ChecksumType: req.ChecksumType,
+		URL:          req.URL,
+		IsVerified:   false,
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	if err := s.ctrl.Store.CapStartISOs.CreateISO(&iso); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	s.recordEvent(r, "iso", iso.ID, "capstart.iso.created", map[string]any{"name": iso.Name, "url": iso.URL})
+	writeJSON(w, http.StatusCreated, Envelope{Data: iso})
+}
+
+func (s *Server) handleUploadISOFile(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(128 << 20); err != nil {
+		writeBadRequest(w, fmt.Errorf("parse multipart ISO upload: %w", err))
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeBadRequest(w, errors.New("multipart field 'file' is required"))
+		return
+	}
+	defer file.Close()
+
+	id := uuid.New().String()
+	name := r.FormValue("name")
+	if name == "" {
+		name = strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename))
+	}
+	dir := filepath.Join(s.ctrl.Store.Paths.Root, "capstart", "isos")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	dstPath := filepath.Join(dir, id+".iso")
+	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	hasher := sha256.New()
+	size, copyErr := io.Copy(io.MultiWriter(dst, hasher), file)
+	closeErr := dst.Close()
+	if copyErr != nil {
+		_ = os.Remove(dstPath)
+		writeInternal(w, copyErr)
+		return
+	}
+	if closeErr != nil {
+		_ = os.Remove(dstPath)
+		writeInternal(w, closeErr)
+		return
+	}
+	iso := capstart.ISO{
+		ID:           id,
+		Name:         name,
+		Version:      r.FormValue("version"),
+		OSType:       r.FormValue("osType"),
+		Architecture: r.FormValue("architecture"),
+		FileSize:     size,
+		Checksum:     hex.EncodeToString(hasher.Sum(nil)),
+		ChecksumType: "sha256",
+		StoragePath:  dstPath,
+		IsVerified:   true,
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	if err := s.ctrl.Store.CapStartISOs.CreateISO(&iso); err != nil {
+		_ = os.Remove(dstPath)
+		writeInternal(w, err)
+		return
+	}
+	s.recordEvent(r, "iso", iso.ID, "capstart.iso.uploaded", map[string]any{"name": iso.Name})
+	writeJSON(w, http.StatusCreated, Envelope{Data: iso})
+}
+
 func (s *Server) handleGetISO(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:read", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	isoID := r.PathValue("id")
-	if isoID == "" {
-		writeBadRequest(w, errors.New("ISO ID is required"))
+	iso, err := s.ctrl.Store.CapStartISOs.GetISO(r.PathValue("id"))
+	if err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
-	// TODO: Query database for ISO
-	writeJSON(w, http.StatusNotFound, Envelope{Error: "ISO not found"})
+	writeData(w, iso, nil)
 }
 
-// DELETE /api/v1/capstart/isos/{id}
 func (s *Server) handleDeleteISO(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:delete", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	isoID := r.PathValue("id")
-	if isoID == "" {
-		writeBadRequest(w, errors.New("ISO ID is required"))
+	id := r.PathValue("id")
+	iso, _ := s.ctrl.Store.CapStartISOs.GetISO(id)
+	if err := s.ctrl.Store.CapStartISOs.DeleteISO(id); err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
-	// TODO: Check if ISO is in use
-	// TODO: Delete ISO from database
-	// TODO: Delete ISO file from storage
-
-	s.recordEvent(r, "iso", isoID, "capstart.iso.deleted", nil)
+	if iso != nil && iso.StoragePath != "" {
+		_ = os.Remove(iso.StoragePath)
+	}
+	s.recordEvent(r, "iso", id, "capstart.iso.deleted", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST /api/v1/capstart/isos/{id}/verify
 func (s *Server) handleVerifyISO(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:read", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	isoID := r.PathValue("id")
-	if isoID == "" {
-		writeBadRequest(w, errors.New("ISO ID is required"))
+	iso, err := s.ctrl.Store.CapStartISOs.GetISO(r.PathValue("id"))
+	if err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
-	// TODO: Fetch ISO from database
-	// TODO: Verify checksum
-	// TODO: Verify file integrity
-	// TODO: Update is_verified flag
-
-	result := map[string]any{
-		"valid":     true,
-		"verified":  true,
-		"checksum":  "abc123",
-		"message":   "ISO verified successfully",
+	result := map[string]any{"valid": false, "verified": false, "checksum": iso.Checksum}
+	if iso.StoragePath == "" {
+		result["message"] = "URL-based ISO is registered; download verification is not implemented yet"
+		writeData(w, result, nil)
+		return
 	}
-
+	sum, err := sha256File(iso.StoragePath)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	iso.Checksum = sum
+	iso.ChecksumType = "sha256"
+	iso.IsVerified = true
+	if err := s.ctrl.Store.CapStartISOs.UpdateISO(iso); err != nil {
+		writeCapStartError(w, err)
+		return
+	}
+	result["valid"] = true
+	result["verified"] = true
+	result["checksum"] = sum
+	result["message"] = "ISO verified successfully"
 	writeData(w, result, nil)
 }
 
-// POST /api/v1/capstart/recipes/{id}/create-vm
 func (s *Server) handleCreateVMFromRecipe(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "instances:create", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
 	recipeID := r.PathValue("id")
-	if recipeID == "" {
-		writeBadRequest(w, errors.New("recipe ID is required"))
+	recipe, err := s.ctrl.Store.CapStartRecipes.GetRecipe(recipeID)
+	if err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
 	var req capstart.CreateVMFromRecipeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBadRequest(w, err)
 		return
 	}
-
-	// TODO: Fetch recipe from database
-	// TODO: Validate user config against recipe schema
-	// TODO: Merge user config with recipe defaults
-	// TODO: Create VM instance
-	// TODO: Execute recipe hooks
-	// TODO: Create RecipeExecution record
-
+	if len(req.Config) == 0 {
+		req.Config = json.RawMessage(`{}`)
+	}
+	if result := capstart.ValidateRecipeConfig(recipe, req.Config); !result.Valid {
+		writeJSON(w, http.StatusBadRequest, Envelope{Data: result, Error: "recipe configuration validation failed"})
+		return
+	}
 	execution := capstart.RecipeExecution{
-		ID:        uuid.New().String(),
 		RecipeID:  recipeID,
+		VMID:      req.VMName,
 		Status:    "pending",
 		Config:    req.Config,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		Logs:      stringPtr("Recipe execution is queued; VM orchestration worker is not implemented yet."),
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
 	}
-
-	s.recordEvent(r, "recipe_execution", execution.ID, "capstart.recipe.execution.started", map[string]any{
-		"recipe_id": recipeID,
-	})
-
-	writeJSON(w, http.StatusCreated, Envelope{Data: execution})
+	if err := s.ctrl.Store.CapStartExecutions.CreateExecution(&execution); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	s.recordEvent(r, "recipe_execution", execution.ID, "capstart.recipe.execution.queued", map[string]any{"recipe_id": recipeID})
+	writeJSON(w, http.StatusAccepted, Envelope{Data: execution})
 }
 
-// POST /api/v1/capstart/install
+func (s *Server) handleGetRecipeExecution(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "instances:read", "project:"+s.project); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	execution, err := s.ctrl.Store.CapStartExecutions.GetExecution(r.PathValue("executionId"))
+	if err != nil {
+		writeCapStartError(w, err)
+		return
+	}
+	writeData(w, execution, nil)
+}
+
+func (s *Server) handleGetRecipeExecutionLogs(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "instances:read", "project:"+s.project); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	execution, err := s.ctrl.Store.CapStartExecutions.GetExecution(r.PathValue("executionId"))
+	if err != nil {
+		writeCapStartError(w, err)
+		return
+	}
+	writeData(w, map[string]any{"logs": ptrString(execution.Logs), "status": execution.Status}, nil)
+}
+
 func (s *Server) handleStartInstallation(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "instances:manage", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
 	var req capstart.CreateInstallationJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBadRequest(w, err)
 		return
 	}
-
 	if req.ISOID == "" || req.VMID == "" {
 		writeBadRequest(w, errors.New("isoID and vmID are required"))
 		return
 	}
-
-	if req.Timeout == 0 {
-		req.Timeout = 3600 // Default 1 hour
+	if _, err := s.ctrl.Store.CapStartISOs.GetISO(req.ISOID); err != nil {
+		writeCapStartError(w, err)
+		return
 	}
-
-	// TODO: Fetch ISO from database
-	// TODO: Verify VM exists
-	// TODO: Configure VM boot with ISO
-	// TODO: Create InstallationJob record
-	// TODO: Queue installation monitoring job
-
 	job := capstart.InstallationJob{
-		ID:        uuid.New().String(),
-		ISODC:     req.ISOID,
-		VMID:      req.VMID,
-		Status:    "pending",
-		Timeout:   req.Timeout,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ISOID:         req.ISOID,
+		VMID:          req.VMID,
+		Status:        "pending",
+		Timeout:       req.Timeout,
+		InstallerLogs: stringPtr("Installation job is queued; ISO boot orchestration is not implemented yet."),
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
-
-	s.recordEvent(r, "installation_job", job.ID, "capstart.installation.started", map[string]any{
-		"iso_id": req.ISOID,
-		"vm_id":  req.VMID,
-	})
-
-	writeJSON(w, http.StatusCreated, Envelope{Data: job})
+	if err := s.ctrl.Store.CapStartInstallations.CreateJob(&job); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	s.recordEvent(r, "installation_job", job.ID, "capstart.installation.queued", map[string]any{"iso_id": req.ISOID, "vm_id": req.VMID})
+	writeJSON(w, http.StatusAccepted, Envelope{Data: job})
 }
 
-// GET /api/v1/capstart/install/{jobId}
 func (s *Server) handleGetInstallationStatus(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "instances:read", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	jobID := r.PathValue("jobId")
-	if jobID == "" {
-		writeBadRequest(w, errors.New("job ID is required"))
+	job, err := s.ctrl.Store.CapStartInstallations.GetJob(r.PathValue("jobId"))
+	if err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
-	// TODO: Query database for installation job
-	// TODO: Return current status and logs
-
-	job := capstart.InstallationJob{
-		ID:        jobID,
-		Status:    "running",
-		UpdatedAt: time.Now(),
-	}
-
 	writeData(w, job, nil)
 }
 
-// POST /api/v1/capstart/install/{jobId}/cancel
 func (s *Server) handleCancelInstallation(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "instances:manage", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	jobID := r.PathValue("jobId")
-	if jobID == "" {
-		writeBadRequest(w, errors.New("job ID is required"))
+	job, err := s.ctrl.Store.CapStartInstallations.GetJob(r.PathValue("jobId"))
+	if err != nil {
+		writeCapStartError(w, err)
 		return
 	}
-
-	// TODO: Fetch job from database
-	// TODO: Cancel running installation
-	// TODO: Eject ISO
-	// TODO: Update job status
-
-	s.recordEvent(r, "installation_job", jobID, "capstart.installation.cancelled", nil)
-	w.WriteHeader(http.StatusNoContent)
+	now := time.Now().UTC()
+	job.Status = "cancelled"
+	job.CompletedAt = &now
+	if err := s.ctrl.Store.CapStartInstallations.UpdateJob(job); err != nil {
+		writeCapStartError(w, err)
+		return
+	}
+	s.recordEvent(r, "installation_job", job.ID, "capstart.installation.cancelled", nil)
+	writeData(w, job, nil)
 }
 
-// GET /api/v1/capstart/recipes/builtin
+func (s *Server) handleGetInstallationLogs(w http.ResponseWriter, r *http.Request) {
+	if err := s.authorize(r, "instances:read", "project:"+s.project); err != nil {
+		writeForbidden(w, err)
+		return
+	}
+	job, err := s.ctrl.Store.CapStartInstallations.GetJob(r.PathValue("jobId"))
+	if err != nil {
+		writeCapStartError(w, err)
+		return
+	}
+	writeData(w, map[string]any{"logs": ptrString(job.InstallerLogs), "status": job.Status}, nil)
+}
+
 func (s *Server) handleListBuiltinRecipes(w http.ResponseWriter, r *http.Request) {
 	if err := s.authorize(r, "capstart:list", "project:"+s.project); err != nil {
 		writeForbidden(w, err)
 		return
 	}
-
-	// TODO: Load built-in recipes from embedded files or database
-	// TODO: Return list of built-in recipes
-
-	builtins := []map[string]any{
-		{
-			"id":   "pihole",
-			"name": "PiHole",
-			"description": "DNS/DHCP server with ad-blocking",
-			"category": "network",
-		},
-		{
-			"id":   "arrsuite",
-			"name": "*arr Suite",
-			"description": "Complete media management setup",
-			"category": "media",
-		},
+	builtin := true
+	recipes, err := s.ctrl.Store.CapStartRecipes.ListRecipes("", &builtin, 0, 500)
+	if err != nil {
+		writeInternal(w, err)
+		return
 	}
+	writeData(w, recipes, nil)
+}
 
-	writeData(w, builtins, nil)
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func writeCapStartError(w http.ResponseWriter, err error) {
+	if strings.Contains(strings.ToLower(err.Error()), "not found") {
+		writeNotFound(w, err.Error())
+		return
+	}
+	writeInternal(w, err)
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+func ptrString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

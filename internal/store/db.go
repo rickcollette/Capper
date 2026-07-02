@@ -9,101 +9,106 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	capperdns "capper/internal/dns"
+	"capper/internal/adminconfig"
 	"capper/internal/ai"
 	"capper/internal/alert"
+	"capper/internal/audit"
+	autoscalestore "capper/internal/autoscale/store"
 	"capper/internal/backup"
+	"capper/internal/billing"
+	bottlestore "capper/internal/bottle/store"
+	"capper/internal/capstart"
 	"capper/internal/cert"
 	"capper/internal/compute"
-	autoscalestore "capper/internal/autoscale/store"
 	csdstore "capper/internal/csd/store"
-	"capper/internal/topology"
 	"capper/internal/database"
-	"capper/internal/health"
-	"capper/internal/lb"
-	"capper/internal/firewall"
-	"capper/internal/host"
-	"capper/internal/iam"
-	"capper/internal/kms"
-	"capper/internal/marketplace"
-	"capper/internal/billing"
+	capperdns "capper/internal/dns"
 	"capper/internal/eventing"
+	"capper/internal/firewall"
+	"capper/internal/functions"
+	"capper/internal/health"
+	"capper/internal/host"
+	"capper/internal/hostsec/fail2ban"
+	"capper/internal/hoststorage"
+	"capper/internal/iam"
 	"capper/internal/ingress"
+	"capper/internal/ipam"
+	"capper/internal/kms"
+	"capper/internal/lb"
+	"capper/internal/marketplace"
+	"capper/internal/mcpserver"
 	"capper/internal/metadata"
-	"capper/internal/queue"
 	"capper/internal/network"
 	"capper/internal/networking"
-	"capper/internal/posture"
 	"capper/internal/org"
+	"capper/internal/posture"
+	"capper/internal/queue"
+	"capper/internal/quotas"
 	"capper/internal/registry"
 	"capper/internal/resource"
-	"capper/internal/secret"
-	caps3 "capper/internal/s3server"
-	"capper/internal/stack"
-	"capper/internal/vpc"
-	"capper/internal/storage"
-	bottlestore "capper/internal/bottle/store"
-	"capper/internal/vpcmover"
-	"capper/internal/audit"
-	"capper/internal/quotas"
 	"capper/internal/resourcemon"
-	"capper/internal/functions"
-	"capper/internal/mcpserver"
-	"capper/internal/ipam"
-	"capper/internal/adminconfig"
-	"capper/internal/hoststorage"
-	"capper/internal/hostsec/fail2ban"
+	caps3 "capper/internal/s3server"
+	"capper/internal/secret"
+	"capper/internal/stack"
+	"capper/internal/storage"
+	"capper/internal/topology"
+	"capper/internal/vpc"
+	"capper/internal/vpcmover"
 )
 
 type Store struct {
-	DB        *sql.DB
-	Paths     Paths
-	SecretKey []byte // AES-256 master key for secrets (also used for S3 credential encryption)
-	Resources *resource.Store
-	Projects  *org.Store
-	IAM       *iam.Manager
-	Hosts     *host.Store
-	Networks    *network.Store
-	Networking  *networking.Service
-	Firewalls   *firewall.Store
-	DNS       *capperdns.Store
-	Compute   *compute.Store
-	Storage   *storage.Store
-	Registry  *registry.Store
-	Events    *EventStore
-	Secrets   *secret.Manager
-	KMS       *kms.Manager
-	Certs     *cert.Manager
-	Posture   *posture.Scanner
-	LB        *lb.Manager
-	Backup    *backup.Manager
-	Health    *health.Store
-	Stack       *stack.Manager
-	Jobs        *stack.JobStore
-	Bottles     *bottlestore.Store
-	Databases   *database.Manager
-	AI          *ai.Manager
-	Marketplace *marketplace.Manager
-	Metadata    *metadata.Manager
-	Billing     *billing.Manager
-	Queue       *queue.Manager
-	Ingress     *ingress.Manager
-	Eventing    *eventing.Manager
-	CSD         *csdstore.Store
-	Autoscale   *autoscalestore.Store
-	Topology    *topology.Manager
-	VPC         *vpc.Manager
-	VPCMover    *vpcmover.Store
-	Audit       *audit.Store
-	Quotas      *quotas.Store
-	ResourceMon *resourcemon.Store
-	Functions   *functions.Store
-	MCPServers  *mcpserver.Store
-	IPAM        *ipam.Store
-	AdminConfig   *adminconfig.Store
-	HostStorage   *hoststorage.Store
-	Fail2ban      *fail2ban.Store
-	DeletionJobs  *DeletionJobStore
+	DB                    *sql.DB
+	Paths                 Paths
+	SecretKey             []byte // AES-256 master key for secrets (also used for S3 credential encryption)
+	Resources             *resource.Store
+	Projects              *org.Store
+	IAM                   *iam.Manager
+	Hosts                 *host.Store
+	Networks              *network.Store
+	Networking            *networking.Service
+	Firewalls             *firewall.Store
+	DNS                   *capperdns.Store
+	Compute               *compute.Store
+	Storage               *storage.Store
+	Registry              *registry.Store
+	Events                *EventStore
+	Secrets               *secret.Manager
+	KMS                   *kms.Manager
+	Certs                 *cert.Manager
+	Posture               *posture.Scanner
+	LB                    *lb.Manager
+	Backup                *backup.Manager
+	Health                *health.Store
+	Stack                 *stack.Manager
+	Jobs                  *stack.JobStore
+	Bottles               *bottlestore.Store
+	Databases             *database.Manager
+	AI                    *ai.Manager
+	Marketplace           *marketplace.Manager
+	Metadata              *metadata.Manager
+	Billing               *billing.Manager
+	Queue                 *queue.Manager
+	Ingress               *ingress.Manager
+	Eventing              *eventing.Manager
+	CSD                   *csdstore.Store
+	Autoscale             *autoscalestore.Store
+	Topology              *topology.Manager
+	VPC                   *vpc.Manager
+	VPCMover              *vpcmover.Store
+	Audit                 *audit.Store
+	Quotas                *quotas.Store
+	ResourceMon           *resourcemon.Store
+	Functions             *functions.Store
+	MCPServers            *mcpserver.Store
+	IPAM                  *ipam.Store
+	AdminConfig           *adminconfig.Store
+	HostStorage           *hoststorage.Store
+	Fail2ban              *fail2ban.Store
+	DeletionJobs          *DeletionJobStore
+	CapStartRecipes       *capstart.RecipeStore
+	CapStartExecutions    *capstart.RecipeExecutionStore
+	CapStartISOs          *capstart.ISOStore
+	CapStartInstallations *capstart.InstallationJobStore
 }
 
 func Open(paths Paths) (*Store, error) {
@@ -246,6 +251,14 @@ func Open(paths Paths) (*Store, error) {
 	s.HostStorage = hoststorage.NewStore(db)
 	s.Fail2ban = fail2ban.NewStore(db)
 	s.DeletionJobs = NewDeletionJobStore(db)
+	s.CapStartRecipes = capstart.NewRecipeStore(db)
+	s.CapStartExecutions = capstart.NewRecipeExecutionStore(db)
+	s.CapStartISOs = capstart.NewISOStore(db)
+	s.CapStartInstallations = capstart.NewInstallationJobStore(db)
+	if err := capstart.LoadBuiltinRecipes(s.CapStartRecipes); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -393,6 +406,9 @@ func (s *Store) init() error {
 		return err
 	}
 	if err := fail2ban.NewStore(s.DB).InitSchema(); err != nil {
+		return err
+	}
+	if err := capstart.InitSchema(s.DB); err != nil {
 		return err
 	}
 	stmts := []string{

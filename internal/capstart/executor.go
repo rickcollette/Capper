@@ -97,7 +97,6 @@ func (re *RecipeExecutor) ExecuteRecipe(ctx context.Context, execution *RecipeEx
 // executeHook executes a single installation hook
 func (re *RecipeExecutor) executeHook(ctx context.Context, hook *map[string]interface{}, config *json.RawMessage, logs io.StringWriter) error {
 	hookType, _ := (*hook)["type"].(string)
-	hookName, _ := (*hook)["name"].(string)
 	timeout := 300 * time.Second // Default 5 minutes
 
 	if timeoutVal, ok := (*hook)["timeout"].(float64); ok {
@@ -146,7 +145,7 @@ func (re *RecipeExecutor) executeScript(ctx context.Context, hook *map[string]in
 	if err := cmd.Run(); err != nil {
 		errorMsg := fmt.Sprintf("Script failed: %v\nStdout: %s\nStderr: %s", err, stdout.String(), stderr.String())
 		logs.WriteString(errorMsg + "\n")
-		return fmt.Errorf(errorMsg)
+		return fmt.Errorf("%s", errorMsg)
 	}
 
 	// Log output

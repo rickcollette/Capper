@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"capper/internal/control"
 	"capper/internal/compute"
+	"capper/internal/control"
 	"capper/internal/controller"
 	csdbackend "capper/internal/csd/backend"
 	csdserver "capper/internal/csd/server"
@@ -861,6 +861,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/capstart/install", s.handleStartInstallation)
 	s.mux.HandleFunc("GET /api/v1/capstart/install/{jobId}", s.handleGetInstallationStatus)
 	s.mux.HandleFunc("POST /api/v1/capstart/install/{jobId}/cancel", s.handleCancelInstallation)
+	s.mux.HandleFunc("GET /api/v1/capstart/install/{jobId}/logs", s.handleGetInstallationLogs)
+	s.mux.HandleFunc("GET /api/v1/capstart/executions/{executionId}", s.handleGetRecipeExecution)
+	s.mux.HandleFunc("GET /api/v1/capstart/executions/{executionId}/logs", s.handleGetRecipeExecutionLogs)
 
 	// Certificate Manager routes
 	s.certRoutes()

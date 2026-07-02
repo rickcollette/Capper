@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build, test, and (on success) package the Capper All-In-One bundle for
-# Ubuntu 24.04 (amd64). Output: DIST/AIO/capper-aio-<version>-linux-amd64.tgz
+# the local platform by default. Output:
+# DIST/AIO/capper-aio-<version>-<platform>.tgz
 #
 # Usage:
 #   scripts/build-aio.sh [VERSION]
@@ -11,6 +12,8 @@
 #   SKIP_WEB=1     skip the npm console build (ships no console/)
 #   SKIP_TESTS=1   skip the test gate (build + package only; not recommended)
 #   BUMP_VERSION=1 when no VERSION arg: auto-increment patch in ./VERSION (default 1)
+#   PLATFORM_SUFFIX artifact suffix (default linux-amd64; matrix builds set
+#                   ubuntu24.04-glibc2.39-x86_64, debian12-..., etc.)
 set -euo pipefail
 
 # ── Locations ─────────────────────────────────────────────────────────────────
@@ -19,7 +22,7 @@ cd "$ROOT"
 
 CAPDB_DIR="${CAPDB_DIR:-CapDB}"
 CAPPERWEB_DIR="${CAPPERWEB_DIR:-/home/megalith/CapperVM/CapperWeb}"
-BUILD_CAPDB="$ROOT/build/capdb"
+BUILD_CAPDB="${CAPDB_BUILD:-$ROOT/build/capdb}"
 
 VERSION="${1:-}"
 if [ -z "$VERSION" ]; then
@@ -33,7 +36,9 @@ if [ -z "$VERSION" ]; then
   fi
 fi
 
-PKG="capper-aio-${VERSION}-linux-amd64"
+PLATFORM_SUFFIX="${PLATFORM_SUFFIX:-linux-amd64}"
+GO_PACKAGE_PARALLELISM="${GO_PACKAGE_PARALLELISM:-1}"
+PKG="capper-aio-${VERSION}-${PLATFORM_SUFFIX}"
 OUT_DIR="$ROOT/DIST/AIO"
 STAGE="$OUT_DIR/stage/$PKG"
 
@@ -41,7 +46,7 @@ say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 say "Preflight"
-for t in go cmake cc tar git; do
+for t in go cmake cc tar git python3; do
   command -v "$t" >/dev/null 2>&1 || { echo "error: missing tool '$t'" >&2; exit 1; }
 done
 
@@ -66,10 +71,16 @@ BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X capper/internal/version.Version=${VERSION} -X capper/internal/version.Commit=${COMMIT} -X capper/internal/version.BuildDate=${BUILD_DATE}"
 
 say "Building CapDB engine (server + client lib)"
-make capdb
+mkdir -p "$CAPDB_DIR_ABS/build"
+cc "$CAPDB_DIR_ABS/tools/mksourceid.c" -o "$CAPDB_DIR_ABS/build/mksourceid"
+make capdb CAPDB_DIR="$CAPDB_DIR" CAPDB_BUILD="$BUILD_CAPDB"
 
 say "Building capper (cgo + capdb backend, version $VERSION)"
-make build-capdb CAPPER_VERSION="$VERSION"   # -> bin/capper
+mkdir -p bin
+CGO_ENABLED=1 \
+  CGO_CFLAGS="$CGO_CFLAGS" \
+  CGO_LDFLAGS="$CGO_LDFLAGS" \
+  go build -tags capdb -ldflags "$LDFLAGS" -o bin/capper ./cmd/capper
 
 say "Building capper-agent and capinit (static, pure-Go, version $VERSION)"
 mkdir -p bin
@@ -92,20 +103,26 @@ if [ "${SKIP_TESTS:-0}" = "1" ]; then
   echo "SKIP_TESTS=1 — skipping the test gate"
 else
   say "Tests: pure-Go suite"
-  go build ./...
-  go vet ./...
-  go test ./...
+  go build -p "$GO_PACKAGE_PARALLELISM" ./...
+  go vet -p "$GO_PACKAGE_PARALLELISM" ./...
+  go test -p "$GO_PACKAGE_PARALLELISM" ./...
 
   say "Tests: CapDB driver conformance + store integration"
-  make test-capdb
   CAPDB_SERVER="$BUILD_CAPDB/capdb-server" \
-    go test -tags capdb ./internal/store/ -run SelfHeal -count=1
+    CGO_CFLAGS="$CGO_CFLAGS" \
+    CGO_LDFLAGS="$CGO_LDFLAGS" \
+    go test -p "$GO_PACKAGE_PARALLELISM" -tags capdb ./internal/capdbdriver/...
+  CAPDB_SERVER="$BUILD_CAPDB/capdb-server" \
+    CGO_CFLAGS="$CGO_CFLAGS" \
+    CGO_LDFLAGS="$CGO_LDFLAGS" \
+    go test -p "$GO_PACKAGE_PARALLELISM" -tags capdb ./internal/store/ -run SelfHeal -count=1
 fi
 
 # ── Package ───────────────────────────────────────────────────────────────────
 say "Packaging $PKG"
 rm -rf "$OUT_DIR/stage"
 mkdir -p "$STAGE/bin"
+mkdir -p "$STAGE/images"
 
 install -m 0755 bin/capper            "$STAGE/bin/capper"
 install -m 0755 bin/capper-agent      "$STAGE/bin/capper-agent"
@@ -135,9 +152,9 @@ build_sample_image() {
   local work="$OUT_DIR/capwork"
   rm -rf "$work"; mkdir -p "$work/store"
   ./bin/capper --store "$work/store" create "$key" "$dir/capper.json"
-  cp "$work/store/images/$cap" "$STAGE/$cap"
+  cp "$work/store/images/$cap" "$STAGE/images/$cap"
   rm -rf "$work"
-  echo "staged sample image: $cap ($(du -h "$STAGE/$cap" | cut -f1))"
+  echo "staged sample image: $cap ($(du -h "$STAGE/images/$cap" | cut -f1))"
 }
 
 if [ "${SKIP_IMAGE:-0}" = "1" ]; then
@@ -153,8 +170,47 @@ else
   fi
 fi
 
+say "Writing manifest"
+CAPDB_COMMIT="$(git -C "$CAPDB_DIR_ABS" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+CAPPERWEB_COMMIT="not-built"
+if [ -d "$CAPPERWEB_DIR/.git" ] && [ "${SKIP_WEB:-0}" != "1" ]; then
+  CAPPERWEB_COMMIT="$(git -C "$CAPPERWEB_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+fi
+GLIBC_VERSION="$({ getconf GNU_LIBC_VERSION 2>/dev/null || true; } | awk '{print $2}')"
+OPENSSL_VERSION="$(openssl version 2>/dev/null || echo unknown)"
+python3 - "$STAGE/manifest.json" "$VERSION" "$PLATFORM_SUFFIX" "$COMMIT" "$BUILD_DATE" "$CAPDB_COMMIT" "$CAPPERWEB_COMMIT" "$GLIBC_VERSION" "$OPENSSL_VERSION" "${BUILD_IMAGE_DIGEST:-}" <<'PY'
+import glob, hashlib, json, os, sys
+path, version, platform, commit, build_date, capdb_commit, web_commit, glibc, openssl, image_digest = sys.argv[1:11]
+root = os.path.dirname(path)
+bins = {}
+for p in glob.glob(os.path.join(root, "bin", "*")):
+    with open(p, "rb") as f:
+        bins[os.path.basename(p)] = hashlib.sha256(f.read()).hexdigest()
+images = {}
+for p in glob.glob(os.path.join(root, "images", "*.cap")):
+    with open(p, "rb") as f:
+        images[os.path.basename(p)] = {"sha256": hashlib.sha256(f.read()).hexdigest(), "sizeBytes": os.path.getsize(p)}
+manifest = {
+    "version": version,
+    "platform": platform,
+    "arch": "x86_64",
+    "commit": commit,
+    "buildDate": build_date,
+    "capdbCommit": capdb_commit,
+    "capperWebCommit": web_commit,
+    "glibcVersion": glibc,
+    "opensslVersion": openssl,
+    "buildImageDigest": image_digest,
+    "binaries": bins,
+    "images": images,
+}
+with open(path, "w") as f:
+    json.dump(manifest, f, indent=2, sort_keys=True)
+    f.write("\n")
+PY
+
 cat > "$STAGE/README.md" <<EOF
-# Capper All-In-One — $VERSION (Ubuntu 24.04, amd64)
+# Capper All-In-One — $VERSION ($PLATFORM_SUFFIX)
 
 Single-node Capper: control plane, node agent, and CapDB SQL backend.
 
@@ -175,8 +231,9 @@ capper aio status
 \`\`\`
 
 ## Runtime requirements
-- Ubuntu 24.04 (amd64), systemd, cgroup v2
-- OpenSSL 3 (\`libssl.so.3\`): \`sudo apt-get install -y openssl libssl3\`
+- Platform: \`$PLATFORM_SUFFIX\`
+- systemd, cgroup v2, Docker Engine, Docker Compose plugin
+- See \`manifest.json\` for the build glibc/OpenSSL ABI.
 EOF
 
 say "Creating tarball"
