@@ -18,10 +18,13 @@ rm -rf "$OUT" "$LEGACY_OUT"
 mkdir -p "$OUT" "$LEGACY_OUT"
 
 say "Building Capper + CapperWeb"
-make dist web
+make CAPPERWEB_DIR="$WEB" dist web
 
 say "Seeding screenshot user ($USER) into store"
 go run ./tools/screenseed ./DIST/store --user "$USER:$PASS:admin" >/dev/null
+
+say "Seeding screenshot demo data"
+go run ./tools/screendemo ./DIST/store >/dev/null
 
 say "Bundling console into DIST"
 mkdir -p DIST/console
